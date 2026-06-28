@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iGaming Player Behavior & Financial Curve Analyzer</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Load Plotly.js for premium interactive chart rendering -->
+  <script src="https://cdn.plot.ly/plotly-2.24.1.min.js" charset="utf-8"></script>
+</head>
+<body>
+
+  <header>
+    <h1 id="nav-title">iGaming Analytics <span id="nav-subtitle">// Player Behavior Analyzer</span> <span class="badge-version">v1.0</span></h1>
+    <div class="header-right">
+      <div class="legend-pills">
+        <div class="legend-pill"><div class="legend-color cum-profit"></div> <span id="legend-curve">Cumulative Profit Curve</span></div>
+        <div class="legend-pill"><span style="color:#10b981; font-weight:bold;">★</span> <span id="legend-fg">Free Game Marker</span></div>
+        <div class="legend-pill"><span style="color:#f59e0b; font-weight:bold;">♦</span> <span id="legend-gs">Game Switch Marker</span></div>
+      </div>
+      <button id="btn-lang-toggle" class="btn-lang">繁中 / EN</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Left Column: Controls and Config -->
+    <div class="control-sidebar">
+      <div class="panel">
+        <h2 id="filter-title" class="panel-title">Filter Selection</h2>
+        
+        <div class="form-group" style="margin-top: 0.5rem; margin-bottom: 1.25rem; display: flex; flex-direction: column; gap: 0.5rem;">
+          <label id="label-filters-title" style="display: block; font-size: 0.85rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.05em;">Player Filters</label>
+          
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <input type="checkbox" id="checkbox-new-player" checked style="width: 1.1rem; height: 1.1rem; cursor: pointer; accent-color: var(--primary);">
+            <label id="label-new-player" for="checkbox-new-player" style="cursor: pointer; font-size: 0.85rem; margin-bottom: 0; text-transform: none; letter-spacing: normal; color: var(--text-primary);">New Player</label>
+          </div>
+          
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <input type="checkbox" id="checkbox-old-player" checked style="width: 1.1rem; height: 1.1rem; cursor: pointer; accent-color: var(--primary);">
+            <label id="label-old-player" for="checkbox-old-player" style="cursor: pointer; font-size: 0.85rem; margin-bottom: 0; text-transform: none; letter-spacing: normal; color: var(--text-primary);">Old Player</label>
+          </div>
+          
+          <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem;">
+            <input type="checkbox" id="checkbox-win-player" checked style="width: 1.1rem; height: 1.1rem; cursor: pointer; accent-color: var(--primary);">
+            <label id="label-win-player" for="checkbox-win-player" style="cursor: pointer; font-size: 0.85rem; margin-bottom: 0; text-transform: none; letter-spacing: normal; color: var(--text-primary);">Winning Player</label>
+          </div>
+          
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <input type="checkbox" id="checkbox-lose-player" checked style="width: 1.1rem; height: 1.1rem; cursor: pointer; accent-color: var(--primary);">
+            <label id="label-lose-player" for="checkbox-lose-player" style="cursor: pointer; font-size: 0.85rem; margin-bottom: 0; text-transform: none; letter-spacing: normal; color: var(--text-primary);">Losing Player (Incl. Tie)</label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label id="label-active-date" for="date-select">Active Date (Partition)</label>
+          <select id="date-select" class="form-control">
+            <option value="" id="opt-placeholder-date">(Loading dates...)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label id="label-active-player" for="player-select">Active Player ID</label>
+          <select id="player-select" class="form-control">
+            <option value="" id="opt-placeholder-player">(Select date first)</option>
+          </select>
+        </div>
+      </div>
+      
+
+    </div>
+
+    <!-- Right Column: Visual Dashboard -->
+    <div class="analytics-content">
+      <!-- Summary Metrics Grid -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <span id="label-stat-spins" class="metric-label">Daily Spins</span>
+          <span id="metric-total-spins" class="metric-value">0</span>
+        </div>
+        <div class="metric-card">
+          <span id="label-stat-wager" class="metric-label">Total Wagered (IDR)</span>
+          <span id="metric-total-wager" class="metric-value">0 IDR</span>
+        </div>
+        <div class="metric-card">
+          <span id="label-stat-payout" class="metric-label">Total Payouts (IDR)</span>
+          <span id="metric-total-payout" class="metric-value">0 IDR</span>
+        </div>
+        <div class="metric-card">
+          <span id="label-stat-net" class="metric-label">Net Return (IDR)</span>
+          <span id="metric-net-profit" class="metric-value">0 IDR</span>
+        </div>
+        <div class="metric-card">
+          <span id="label-stat-switches" class="metric-label">Game Switches</span>
+          <span id="metric-game-switches" class="metric-value" style="color: var(--warning);">0</span>
+        </div>
+        <div class="metric-card">
+          <span id="label-stat-free" class="metric-label">Free Game Spins</span>
+          <span id="metric-free-games" class="metric-value" style="color: var(--success);">0</span>
+        </div>
+      </div>
+
+      <!-- Chart Panel -->
+      <div class="panel" style="padding: 1rem;">
+        <div class="chart-container">
+          <div id="chart-viewport" class="chart-viewport"></div>
+        </div>
+      </div>
+
+      <!-- Detail Table Panel -->
+      <div class="panel">
+        <h2 id="table-panel-title" class="panel-title">📊 Sequence Output Table</h2>
+        <div class="table-wrapper">
+          <table id="results-table" class="data-table">
+            <thead>
+              <tr>
+                <th id="th-seq">Play Seq</th>
+                <th id="th-time">Timestamp (bet_at)</th>
+                <th id="th-slot">Slot ID</th>
+                <th id="th-bet-type">Bet Type</th>
+                <th id="th-switch">Game Switch?</th>
+                <th id="th-free">Free Game?</th>
+                <th id="th-bet">Bet (IDR)</th>
+                <th id="th-prize">Prize (IDR)</th>
+                <th id="th-net">Net Profit (IDR)</th>
+                <th id="th-cum">Daily Cum Profit (IDR)</th>
+              </tr>
+            </thead>
+            <tbody id="table-body">
+              <tr>
+                <td id="td-empty" colspan="10" style="text-align: center; color: var(--text-secondary); padding: 2rem;">
+                  Please select a Date and Player ID from the filter sidebar.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
