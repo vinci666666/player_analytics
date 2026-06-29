@@ -60,6 +60,7 @@ const translations = {
     placeholderPlayer: "(Select date first)",
     placeholderDate: "(Loading dates...)",
     labelDateMode: "Date Filter Mode",
+    placeholderSelectPlayer: "(Select player ID)",
     optDateModeSingle: "Single Date",
     optDateModeRange: "Time Interval",
     labelStartDate: "Start Date",
@@ -143,6 +144,7 @@ const translations = {
     placeholderPlayer: "(請先選擇日期)",
     placeholderDate: "(載入日期中...)",
     labelDateMode: "日期篩選模式",
+    placeholderSelectPlayer: "(請選擇玩家 ID)",
     optDateModeSingle: "選擇日期 (單日)",
     optDateModeRange: "時間區間 (範圍)",
     labelStartDate: "開始日期",
@@ -557,7 +559,7 @@ function loadPlayersForDate(startDate, endDate) {
     .then(players => {
       if (currentPlayersRequestController !== requestController) return;
       activePlayersList = players;
-      repopulatePlayerDropdown(startDate, endDate, players[0]);
+      repopulatePlayerDropdown(startDate, endDate);
     })
     .catch(err => {
       if (err.name === 'AbortError' && currentPlayersRequestController !== requestController) return;
@@ -589,6 +591,12 @@ function repopulatePlayerDropdown(startDate, endDate, selectPlayerId = null) {
     resetDashboardState();
     return;
   }
+
+  const placeholderOpt = document.createElement('option');
+  placeholderOpt.value = "";
+  placeholderOpt.id = "opt-placeholder-player";
+  placeholderOpt.textContent = translations[currentLang].placeholderSelectPlayer;
+  playerSelect.appendChild(placeholderOpt);
   
   activePlayersList.forEach(p => {
     const opt = document.createElement('option');
@@ -601,11 +609,8 @@ function repopulatePlayerDropdown(startDate, endDate, selectPlayerId = null) {
   if (selectPlayerId && activePlayersList.includes(String(selectPlayerId))) {
     playerSelect.value = String(selectPlayerId);
   } else {
-    playerSelect.value = String(activePlayersList[0]);
+    playerSelect.value = "";
   }
-  
-  // 觸發該玩家與日期明細資料載入
-  loadAnalyzedData(startDate, endDate, playerSelect.value);
 }
 
 function loadAnalyzedData(startDate, endDate, player_id) {
@@ -771,10 +776,9 @@ function renderDashboard() {
   tableBody.innerHTML = '';
   const MAX_TABLE_ROWS = 5000;
   const rowsToRender = analyzedData.slice(0, MAX_TABLE_ROWS);
+  const htmlRuns = [];
   
   rowsToRender.forEach(row => {
-    const tr = document.createElement('tr');
-    
     // 是否切換遊戲事件狀態標籤
     const isSwitchedCell = row.is_game_changed 
       ? `<span class="badge badge-game-changed">${lang.badgeChanged}</span>` 
@@ -805,34 +809,37 @@ function renderDashboard() {
       }
     }
     
-    tr.innerHTML = `
-      <td style="font-family: var(--font-mono); font-weight:600;">#${row.play_seq}</td>
-      <td style="font-family: var(--font-mono); color: #818cf8;">${row.player_id}</td>
-      <td style="color: var(--text-secondary);">${timestampStr}</td>
-      <td style="font-family: var(--font-mono);">${row.slot_id}</td>
-      <td style="font-size: 0.85rem;">${betTypeStr}</td>
-      <td>${isSwitchedCell}</td>
-      <td>${isFreeCell}</td>
-      <td>${formatCurrency(row.bet_amount)}</td>
-      <td>${formatCurrency(row.total_prize)}</td>
-      <td style="${netClass}">${spinNet > 0 ? '+' : ''}${formatCurrency(spinNet)}</td>
-      <td style="font-family: var(--font-mono); font-weight:bold; ${row.daily_cum_profit >= 0 ? 'color: var(--success)' : 'color: var(--danger)'}">
-        ${formatCurrency(row.daily_cum_profit)}
-      </td>
-    `;
-    tableBody.appendChild(tr);
+    htmlRuns.push(`
+      <tr>
+        <td style="font-family: var(--font-mono); font-weight:600;">#${row.play_seq}</td>
+        <td style="font-family: var(--font-mono); color: #818cf8;">${row.player_id}</td>
+        <td style="color: var(--text-secondary);">${timestampStr}</td>
+        <td style="font-family: var(--font-mono);">${row.slot_id}</td>
+        <td style="font-size: 0.85rem;">${betTypeStr}</td>
+        <td>${isSwitchedCell}</td>
+        <td>${isFreeCell}</td>
+        <td>${formatCurrency(row.bet_amount)}</td>
+        <td>${formatCurrency(row.total_prize)}</td>
+        <td style="${netClass}">${spinNet > 0 ? '+' : ''}${formatCurrency(spinNet)}</td>
+        <td style="font-family: var(--font-mono); font-weight:bold; ${row.daily_cum_profit >= 0 ? 'color: var(--success)' : 'color: var(--danger)'}">
+          ${formatCurrency(row.daily_cum_profit)}
+        </td>
+      </tr>
+    `);
   });
   
   // 若筆數超出限制，於底部顯示提示
   if (analyzedData.length > MAX_TABLE_ROWS) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td colspan="11" style="text-align: center; color: var(--warning); font-weight: bold; padding: 1rem; background: rgba(245, 158, 11, 0.05);">
-        ⚠️ ${currentLang === 'en' ? `Showing first 5,000 of ${analyzedData.length} records. Please narrow down date interval or adjust spin range.` : `僅顯示前 5,000 筆紀錄（共 ${analyzedData.length} 筆）。請縮小時間區間或調整 Spin 範圍以精簡資料。`}
-      </td>
-    `;
-    tableBody.appendChild(tr);
+    htmlRuns.push(`
+      <tr>
+        <td colspan="11" style="text-align: center; color: var(--warning); font-weight: bold; padding: 1rem; background: rgba(245, 158, 11, 0.05);">
+          ⚠️ ${currentLang === 'en' ? `Showing first 5,000 of ${analyzedData.length} records. Please narrow down date interval or adjust spin range.` : `僅顯示前 5,000 筆紀錄（共 ${analyzedData.length} 筆）。請縮小時間區間或調整 Spin 範圍以精簡資料。`}
+        </td>
+      </tr>
+    `);
   }
+  
+  tableBody.innerHTML = htmlRuns.join('');
   
   // 渲染 Plotly 圖表
   renderPlotlyChart(analyzedData, player, dateText);

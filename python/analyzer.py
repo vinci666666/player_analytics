@@ -93,7 +93,7 @@ def load_data_from_db(player_id=None, date_filter=None):
         bet_amount, 
         total_prize 
     FROM 
-        public.player_daily_flow_check
+        public.slot_parent_bet
     """
     
     conditions = []
@@ -113,7 +113,7 @@ def load_data_from_db(player_id=None, date_filter=None):
         
     query += " ORDER BY bet_at ASC;"
     
-    print(f"正在從 public.player_daily_flow_check 讀取資料 (過濾條件: player_id={player_id}, date={date_filter})...")
+    print(f"正在從 public.slot_parent_bet 讀取資料 (過濾條件: player_id={player_id}, date={date_filter})...")
     df = pd.read_sql_query(query, conn, params=params)
     conn.close()
     print(f"成功自資料庫載入 {len(df)} 筆投注紀錄。")

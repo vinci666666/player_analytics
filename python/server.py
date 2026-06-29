@@ -2,10 +2,11 @@ import os
 import sys
 import json
 import calendar
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, send_from_directory
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool
 
 # 初始化 Flask 應用，設定靜態檔案目錄為專案的 web 資料夾
 app = Flask(__name__, static_folder=os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'web')))
@@ -45,25 +46,57 @@ def load_db_config():
         print(f"讀取 config.json 發生錯誤：{e}。將使用預設設定值。", file=sys.stderr)
         return default_config
 
-def get_db_connection():
-    """依據 config.json 的配置建立並回傳 PostgreSQL 連線。"""
+db_pool = None
+
+def init_db_pool():
+    """初始化資料庫連線池，並自動確認/建立索引。"""
+    global db_pool
     config = load_db_config()
     try:
-        return psycopg2.connect(
+        db_pool = ThreadedConnectionPool(
+            minconn=1,
+            maxconn=10,
             host=config["host"],
             port=config["port"],
             database=config["database"],
             user=config["user"],
             password=config["password"],
-            connect_timeout=5  # 設定超時為 5 秒
+            connect_timeout=5
         )
-    except psycopg2.OperationalError as e:
-        # 連線失敗時輸出詳細偵錯建議
+        print("資料庫連線池初始化成功")
+        
+        # 自動檢查並建立索引以提升效能
+        conn = db_pool.getconn()
+        conn.autocommit = True
+        cursor = conn.cursor()
+        try:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_slot_parent_bet_player_id ON public.slot_parent_bet (player_id);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_slot_parent_bet_bet_at_date ON public.slot_parent_bet ((bet_at::date));")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_slot_parent_bet_bet_at_player_id ON public.slot_parent_bet (bet_at, player_id);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_slot_parent_bet_player_id_bet_at ON public.slot_parent_bet (player_id, bet_at);")
+            print("資料庫效能索引確認與建立完成")
+        except Exception as idx_err:
+            print(f"警告：自動建立索引失敗: {idx_err}", file=sys.stderr)
+        finally:
+            db_pool.putconn(conn)
+    except Exception as e:
         print("\n=== 資料庫連線錯誤 (DATABASE CONNECTION ERROR) ===", file=sys.stderr)
-        print(f"無法使用設定連線至 PostgreSQL: {config}", file=sys.stderr)
+        print(f"無法建立連線池: {config}", file=sys.stderr)
         print(f"錯誤原因: {e}", file=sys.stderr)
-        print("請確認 PostgreSQL 服務是否正常運行，且 config.json 中的連線資訊是否正確。\n", file=sys.stderr)
         raise e
+
+def get_db_connection():
+    """從連線池獲取 PostgreSQL 連線。"""
+    global db_pool
+    if db_pool is None:
+        init_db_pool()
+    return db_pool.getconn()
+
+def release_db_connection(conn):
+    """將連線釋放回連線池。"""
+    global db_pool
+    if db_pool and conn:
+        db_pool.putconn(conn)
 
 # ----------------------------------------------------
 # 靜態網頁檔案託管路由
@@ -83,16 +116,20 @@ def serve_static(path):
 # ----------------------------------------------------
 @app.route('/api/dates', methods=['GET'])
 def get_dates():
-    """獲取資料表中有投注紀錄的所有不重複日期清單（遞減排序）。"""
+    """獲取資料表中有投注紀錄的所有不重複日期清單（遞減排序），使用遞迴 CTE 鬆散索引掃描優化。"""
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         query = """
-        SELECT DISTINCT bet_at::date AS play_date
-        FROM public.slot_parent_bet
-        WHERE bet_at IS NOT NULL
-        ORDER BY play_date DESC;
+        WITH RECURSIVE t AS (
+           (SELECT (bet_at::date) AS play_date FROM public.slot_parent_bet WHERE bet_at IS NOT NULL ORDER BY 1 DESC LIMIT 1)
+           UNION ALL
+           SELECT (SELECT (bet_at::date) FROM public.slot_parent_bet WHERE bet_at IS NOT NULL AND (bet_at::date) < t.play_date ORDER BY 1 DESC LIMIT 1)
+           FROM t
+           WHERE t.play_date IS NOT NULL
+        )
+        SELECT play_date FROM t WHERE play_date IS NOT NULL;
         """
         cursor.execute(query)
         rows = cursor.fetchall()
@@ -104,7 +141,7 @@ def get_dates():
         return jsonify({"error": str(e)}), 500
     finally:
         if conn:
-            conn.close()
+            release_db_connection(conn)
 
 def get_filter_args():
     """Parse player filter query parameters shared by player list and data endpoints."""
@@ -134,23 +171,39 @@ def get_filter_args():
         "max_spins": max_spins,
     }
 
-def build_filtered_players_subquery(start_date, end_date, filters):
+def build_filtered_players_subquery(start_date, end_date, filters, player_id_filter=None):
     """Build the reusable filtered-player subquery and params."""
-    query = """
-        SELECT p.player_id
-        FROM public.slot_parent_bet p
-        LEFT JOIN public.player_stats s ON p.player_id = s.player_id
-        WHERE p.bet_at::date >= %s AND p.bet_at::date <= %s
-    """
-    params = [start_date, end_date]
+    start_day, end_day, end_exclusive = get_date_range_values(start_date, end_date)
+
+    # 僅在有指定新/舊玩家篩選條件時才進行與 player_stats 表的 LEFT JOIN
+    use_stats_join = (filters["new_player"] and not filters["old_player"]) or (filters["old_player"] and not filters["new_player"])
+    
+    if use_stats_join:
+        query = """
+            SELECT p.player_id
+            FROM public.slot_parent_bet p
+            LEFT JOIN public.player_stats s ON p.player_id = s.player_id
+            WHERE p.bet_at >= %s AND p.bet_at < %s
+        """
+    else:
+        query = """
+            SELECT p.player_id
+            FROM public.slot_parent_bet p
+            WHERE p.bet_at >= %s AND p.bet_at < %s
+        """
+    params = [start_day, end_exclusive]
+
+    if player_id_filter is not None:
+        query += " AND p.player_id = %s"
+        params.append(player_id_filter)
 
     # 新玩家：首次 spin 日期落在篩選日期範圍內；舊玩家：首次 spin 日期早於篩選開始日。
     if filters["new_player"] and not filters["old_player"]:
         query += " AND s.first_spin_date >= %s AND s.first_spin_date <= %s"
-        params.extend([start_date, end_date])
+        params.extend([start_day, end_day])
     elif filters["old_player"] and not filters["new_player"]:
         query += " AND s.first_spin_date < %s"
-        params.append(start_date)
+        params.append(start_day)
 
     query += " GROUP BY p.player_id"
 
@@ -193,6 +246,11 @@ def validate_date_range(start_date, end_date):
 
     return None
 
+def get_date_range_values(start_date, end_date):
+    start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    return start, end, end + timedelta(days=1)
+
 @app.route('/api/players', methods=['GET'])
 def get_players():
     """獲取在特定日期或時間區間投注的玩家 ID 清單，支援多維度篩選（新/老玩家、贏/輸錢玩家、最大旋轉數）。"""
@@ -224,7 +282,7 @@ def get_players():
         return jsonify({"error": str(e)}), 500
     finally:
         if conn:
-            conn.close()
+            release_db_connection(conn)
 
 @app.route('/api/data', methods=['GET'])
 def get_data():
@@ -249,7 +307,8 @@ def get_data():
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        subquery, subparams = build_filtered_players_subquery(start_date, end_date, filters)
+        subquery, subparams = build_filtered_players_subquery(start_date, end_date, filters, player_id)
+        start_day, _, end_exclusive = get_date_range_values(start_date, end_date)
 
         query = f"""
             SELECT 
@@ -272,16 +331,17 @@ def get_data():
             LEFT JOIN (
                 SELECT player_id, COUNT(*) AS total_spins
                 FROM public.slot_parent_bet
+                WHERE player_id = %s
                 GROUP BY player_id
             ) stats_spin_counts ON d.player_id = stats_spin_counts.player_id
             WHERE 
-                d.bet_at::date >= %s AND d.bet_at::date <= %s
+                d.bet_at >= %s AND d.bet_at < %s
                 AND d.player_id IN ({subquery})
                 AND d.player_id = %s
             ORDER BY 
                 d.bet_at ASC;
         """
-        params = [start_date, end_date] + subparams + [player_id]
+        params = [player_id, start_day, end_exclusive] + subparams + [player_id]
             
         cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
@@ -301,7 +361,7 @@ def get_data():
         return jsonify({"error": str(e)}), 500
     finally:
         if conn:
-            conn.close()
+            release_db_connection(conn)
 
 if __name__ == '__main__':
     print("----------------------------------------------------------------")
