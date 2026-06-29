@@ -89,8 +89,9 @@ def get_dates():
         conn = get_db_connection()
         cursor = conn.cursor()
         query = """
-        SELECT DISTINCT play_date 
-        FROM public.player_daily_flow_check 
+        SELECT DISTINCT bet_at::date AS play_date
+        FROM public.slot_parent_bet
+        WHERE bet_at IS NOT NULL
         ORDER BY play_date DESC;
         """
         cursor.execute(query)
@@ -137,9 +138,9 @@ def build_filtered_players_subquery(start_date, end_date, filters):
     """Build the reusable filtered-player subquery and params."""
     query = """
         SELECT p.player_id
-        FROM public.player_daily_flow_check p
+        FROM public.slot_parent_bet p
         LEFT JOIN public.player_stats s ON p.player_id = s.player_id
-        WHERE p.play_date >= %s AND p.play_date <= %s
+        WHERE p.bet_at::date >= %s AND p.bet_at::date <= %s
     """
     params = [start_date, end_date]
 
@@ -265,16 +266,16 @@ def get_data():
                 s.last_spin_at AS stats_last_spin_at,
                 stats_spin_counts.total_spins AS stats_spin_count
             FROM 
-                public.player_daily_flow_check d
+                public.slot_parent_bet d
             LEFT JOIN
                 public.player_stats s ON d.player_id = s.player_id
             LEFT JOIN (
                 SELECT player_id, COUNT(*) AS total_spins
-                FROM public.player_daily_flow_check
+                FROM public.slot_parent_bet
                 GROUP BY player_id
             ) stats_spin_counts ON d.player_id = stats_spin_counts.player_id
             WHERE 
-                d.play_date >= %s AND d.play_date <= %s
+                d.bet_at::date >= %s AND d.bet_at::date <= %s
                 AND d.player_id IN ({subquery})
                 AND d.player_id = %s
             ORDER BY 

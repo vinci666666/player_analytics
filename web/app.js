@@ -3,6 +3,7 @@
 // 全域狀態變數
 let analyzedData = [];      // 用於快取目前所選玩家在指定日期的所有旋轉紀錄
 let currentLang = 'zh';     // 語系設定：預設為繁體中文 ('zh')，支援切換為英文 ('en')
+let currentPlayersRequestController = null;
 
 // DOM 元素參考
 const dateModeSelect = document.getElementById('date-mode-select');
@@ -15,6 +16,7 @@ const minSpinsInput = document.getElementById('input-min-spins');
 const maxSpinsInput = document.getElementById('input-max-spins');
 const playerSelect = document.getElementById('player-select');
 const btnLangToggle = document.getElementById('btn-lang-toggle');
+const btnApplyFilters = document.getElementById('btn-apply-filters');
 const checkboxNewPlayer = document.getElementById('checkbox-new-player');
 const checkboxOldPlayer = document.getElementById('checkbox-old-player');
 const checkboxWinPlayer = document.getElementById('checkbox-win-player');
@@ -64,8 +66,12 @@ const translations = {
     labelEndDate: "End Date",
     labelMinSpins: "Min Spin Count",
     labelMaxSpins: "Max Spin Count",
+    labelApplyFilters: "Apply Filters",
+    placeholderApplyFilters: "(Click Apply Filters to load players)",
+    placeholderLoadingPlayers: "(Loading players...)",
+    filterTimeoutMessage: "Request timed out after 30 seconds. Please apply filters again.",
     schemaTitle: "Target Schema Spec",
-    schemaDesc: "Target table is <code>public.player_daily_flow_check</code> with the fields:",
+    schemaDesc: "Target table is <code>public.slot_parent_bet</code> with the fields:",
     metricsPlayerTitle: "Player Total Info",
     metricsRangeTitle: "Range Info",
     statTotalSpins: "Total Spins",
@@ -143,8 +149,12 @@ const translations = {
     labelEndDate: "結束日期",
     labelMinSpins: "最小 Spin 數",
     labelMaxSpins: "最大 Spin 數",
+    labelApplyFilters: "篩選",
+    placeholderApplyFilters: "(請按篩選載入玩家)",
+    placeholderLoadingPlayers: "(玩家載入中...)",
+    filterTimeoutMessage: "本次請求已超過 30 秒並取消，請再次按篩選。",
     schemaTitle: "目標資料表 Schema",
-    schemaDesc: "目標資料表為 <code>public.player_daily_flow_check</code>，欄位如下：",
+    schemaDesc: "目標資料表為 <code>public.slot_parent_bet</code>，欄位如下：",
     metricsPlayerTitle: "玩家總資訊",
     metricsRangeTitle: "玩家範圍內資訊",
     statTotalSpins: "旋轉次數",
@@ -165,9 +175,9 @@ const translations = {
     thTime: "時間戳記 (bet_at)",
     thSlot: "遊戲 ID",
     thBetType: "投注類型",
-    betTypeNormal: "一般投注 (normal bet)",
-    betTypeAnte: "前置投注 (ante bet)",
-    betTypeBuy: "購買特色 (buy feature)",
+    betTypeNormal: "一般投注",
+    betTypeAnte: "前置投注",
+    betTypeBuy: "購買特色",
     betTypeUnknown: "未知 ({type})",
     thSwitch: "是否切換遊戲？",
     thFree: "是否免費？",
@@ -230,6 +240,7 @@ function updateLanguageUI() {
   document.getElementById('label-end-date').textContent = lang.labelEndDate;
   document.getElementById('label-min-spins').textContent = lang.labelMinSpins;
   document.getElementById('label-max-spins').textContent = lang.labelMaxSpins;
+  document.getElementById('label-apply-filters').textContent = lang.labelApplyFilters;
   
   // 下拉選單預設選項
   const optPlaceholderDate = document.getElementById('opt-placeholder-date');
@@ -300,8 +311,10 @@ btnLangToggle.addEventListener('click', () => {
     endDate = dateEndSelect.value;
   }
   const activePlayer = playerSelect.value;
-  if (startDate && endDate) {
+  if (startDate && endDate && activePlayersList.length > 0) {
     repopulatePlayerDropdown(startDate, endDate, activePlayer);
+  } else if (startDate && endDate) {
+    markFiltersPending();
   }
 });
 
@@ -315,27 +328,32 @@ dateModeSelect.addEventListener('change', () => {
     containerSingleDate.style.display = 'none';
     containerRangeDate.style.display = 'block';
   }
-  triggerLoadPlayers();
+  markFiltersPending();
 });
 
-// 各個日期下拉選單改變，重新加載玩家 ID 清單
+// 各個日期下拉選單改變，只標記待篩選；按下篩選按鈕才重新加載玩家 ID 清單
 dateSelect.addEventListener('change', () => {
-  triggerLoadPlayers();
+  markFiltersPending();
 });
 dateStartSelect.addEventListener('change', () => {
-  triggerLoadPlayers();
+  markFiltersPending();
 });
 dateEndSelect.addEventListener('change', () => {
-  triggerLoadPlayers();
+  markFiltersPending();
 });
 
-// Spin 數範圍輸入框改變，重新加載玩家 ID 清單
+// Spin 數範圍輸入框改變，只標記待篩選；按下篩選按鈕才重新加載玩家 ID 清單
 minSpinsInput.addEventListener('change', () => {
   normalizeSpinRangeInputs();
-  triggerLoadPlayers();
+  markFiltersPending();
 });
 
 maxSpinsInput.addEventListener('change', () => {
+  normalizeSpinRangeInputs();
+  markFiltersPending();
+});
+
+btnApplyFilters.addEventListener('click', () => {
   normalizeSpinRangeInputs();
   triggerLoadPlayers();
 });
@@ -359,25 +377,25 @@ playerSelect.addEventListener('change', () => {
   }
 });
 
-// 篩選框互斥邏輯：新老互斥、贏輸互斥；狀態改變時即時更新玩家清單
+// 篩選框互斥邏輯：新老互斥、贏輸互斥；狀態改變時等待使用者按篩選
 checkboxNewPlayer.addEventListener('change', () => {
   if (checkboxNewPlayer.checked) checkboxOldPlayer.checked = false;
-  triggerLoadPlayers();
+  markFiltersPending();
 });
 
 checkboxOldPlayer.addEventListener('change', () => {
   if (checkboxOldPlayer.checked) checkboxNewPlayer.checked = false;
-  triggerLoadPlayers();
+  markFiltersPending();
 });
 
 checkboxWinPlayer.addEventListener('change', () => {
   if (checkboxWinPlayer.checked) checkboxLosePlayer.checked = false;
-  triggerLoadPlayers();
+  markFiltersPending();
 });
 
 checkboxLosePlayer.addEventListener('change', () => {
   if (checkboxLosePlayer.checked) checkboxWinPlayer.checked = false;
-  triggerLoadPlayers();
+  markFiltersPending();
 });
 
 // ----------------------------------------------------
@@ -434,7 +452,7 @@ function loadAvailableDates() {
       dateEndSelect.value = dates[0];
       dateStartSelect.value = getDefaultRangeStartDate(dates, dates[0]);
       
-      triggerLoadPlayers();
+      markFiltersPending();
     })
     .catch(err => {
       console.error("載入可用日期發生錯誤:", err);
@@ -480,6 +498,21 @@ function triggerLoadPlayers() {
 
 let activePlayersList = []; // 用於快取目前加載的玩家 ID 陣列
 
+function markFiltersPending() {
+  activePlayersList = [];
+  playerSelect.innerHTML = `<option value="" id="opt-placeholder-player">${translations[currentLang].placeholderApplyFilters}</option>`;
+  resetDashboardState();
+}
+
+function setFilterLoading(isLoading) {
+  btnApplyFilters.disabled = isLoading;
+  btnApplyFilters.style.opacity = isLoading ? '0.7' : '';
+  btnApplyFilters.style.cursor = isLoading ? 'not-allowed' : '';
+  document.getElementById('label-apply-filters').textContent = isLoading
+    ? (currentLang === 'en' ? 'Loading...' : '載入中...')
+    : translations[currentLang].labelApplyFilters;
+}
+
 function loadPlayersForDate(startDate, endDate) {
   // 依據當前選定的日期與 4 個篩選方塊狀態，獲取過濾後的玩家清單
   const newPlayer = checkboxNewPlayer.checked;
@@ -499,8 +532,22 @@ function loadPlayersForDate(startDate, endDate) {
     min_spins: minSpins,
     max_spins: maxSpins
   });
+
+  if (currentPlayersRequestController) {
+    currentPlayersRequestController.abort();
+  }
+  currentPlayersRequestController = new AbortController();
+  const requestController = currentPlayersRequestController;
+  const timeoutId = setTimeout(() => {
+    requestController.abort();
+  }, 30000);
+
+  activePlayersList = [];
+  playerSelect.innerHTML = `<option value="">${translations[currentLang].placeholderLoadingPlayers}</option>`;
+  resetDashboardState();
+  setFilterLoading(true);
   
-  fetch(`/api/players?${queryParams.toString()}`)
+  fetch(`/api/players?${queryParams.toString()}`, { signal: requestController.signal })
     .then(res => {
       if (!res.ok) {
         return res.json().then(data => { throw new Error(data.error || "伺服器錯誤"); });
@@ -508,13 +555,25 @@ function loadPlayersForDate(startDate, endDate) {
       return res.json();
     })
     .then(players => {
+      if (currentPlayersRequestController !== requestController) return;
       activePlayersList = players;
       repopulatePlayerDropdown(startDate, endDate, players[0]);
     })
     .catch(err => {
+      if (err.name === 'AbortError' && currentPlayersRequestController !== requestController) return;
+      const message = err.name === 'AbortError'
+        ? translations[currentLang].filterTimeoutMessage
+        : err.message;
       console.error(`讀取日期範圍 ${startDate} ~ ${endDate} 的玩家清單失敗:`, err);
-      playerSelect.innerHTML = `<option value="">⚠️ ${err.message}</option>`;
+      playerSelect.innerHTML = `<option value="">⚠️ ${message}</option>`;
       resetDashboardState();
+    })
+    .finally(() => {
+      clearTimeout(timeoutId);
+      if (currentPlayersRequestController === requestController) {
+        currentPlayersRequestController = null;
+        setFilterLoading(false);
+      }
     });
 }
 
@@ -729,7 +788,7 @@ function renderDashboard() {
     // 淨利數值與正負顏色 class 決定
     const spinNet = row.net_profit;
     const netClass = spinNet > 0 ? 'color: var(--success);' : (spinNet < 0 ? 'color: var(--danger);' : '');
-    const timestampStr = row.bet_at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const timestampStr = formatDateTimeForTooltip(row.bet_at);
     
     // 投注類型代碼映射為文字字串
     let betTypeStr = '--';
@@ -1051,10 +1110,17 @@ function buildChartCustomData(row, lang) {
     formatCurrency(row.bet_amount),
     formatCurrency(row.total_prize),
     row.slot_id,
-    row.bet_at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    formatDateTimeForTooltip(row.bet_at),
     getBetTypeLabel(row.bet_type, lang),
     row.player_id
   ];
+}
+
+function formatDateTimeForTooltip(dateValue) {
+  if (!(dateValue instanceof Date) || Number.isNaN(dateValue.getTime())) return '--';
+  const datePart = dateValue.toLocaleDateString('en-CA');
+  const timePart = dateValue.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return `${datePart} ${timePart}`;
 }
 
 function addOneCalendarMonth(date) {
