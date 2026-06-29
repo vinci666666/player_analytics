@@ -1,6 +1,8 @@
 import os
 import sys
 import json
+import calendar
+from datetime import datetime
 from flask import Flask, jsonify, request, send_from_directory
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -87,9 +89,8 @@ def get_dates():
         conn = get_db_connection()
         cursor = conn.cursor()
         query = """
-        SELECT DISTINCT bet_at::date AS play_date 
+        SELECT DISTINCT play_date 
         FROM public.player_daily_flow_check 
-        WHERE bet_at IS NOT NULL
         ORDER BY play_date DESC;
         """
         cursor.execute(query)
@@ -104,61 +105,121 @@ def get_dates():
         if conn:
             conn.close()
 
+def get_filter_args():
+    """Parse player filter query parameters shared by player list and data endpoints."""
+    try:
+        min_spins = int(request.args.get('min_spins', 0))
+        if min_spins < 0:
+            min_spins = 0
+    except ValueError:
+        min_spins = 0
+
+    try:
+        max_spins = int(request.args.get('max_spins', 10000))
+        if max_spins < 0:
+            max_spins = 10000
+    except ValueError:
+        max_spins = 10000
+
+    if max_spins < min_spins:
+        max_spins = min_spins
+
+    return {
+        "new_player": request.args.get('new_player') == 'true',
+        "old_player": request.args.get('old_player') == 'true',
+        "win_player": request.args.get('win_player') == 'true',
+        "lose_player": request.args.get('lose_player') == 'true',
+        "min_spins": min_spins,
+        "max_spins": max_spins,
+    }
+
+def build_filtered_players_subquery(start_date, end_date, filters):
+    """Build the reusable filtered-player subquery and params."""
+    query = """
+        SELECT p.player_id
+        FROM public.player_daily_flow_check p
+        LEFT JOIN public.player_stats s ON p.player_id = s.player_id
+        WHERE p.play_date >= %s AND p.play_date <= %s
+    """
+    params = [start_date, end_date]
+
+    # 新玩家：首次 spin 日期落在篩選日期範圍內；舊玩家：首次 spin 日期早於篩選開始日。
+    if filters["new_player"] and not filters["old_player"]:
+        query += " AND s.first_spin_date >= %s AND s.first_spin_date <= %s"
+        params.extend([start_date, end_date])
+    elif filters["old_player"] and not filters["new_player"]:
+        query += " AND s.first_spin_date < %s"
+        params.append(start_date)
+
+    query += " GROUP BY p.player_id"
+
+    having_clauses = []
+    if filters["win_player"] and not filters["lose_player"]:
+        having_clauses.append("SUM(p.total_prize - p.bet_amount) > 0")
+    elif filters["lose_player"] and not filters["win_player"]:
+        having_clauses.append("SUM(p.total_prize - p.bet_amount) <= 0")
+
+    having_clauses.append("COUNT(*) >= %s")
+    params.append(filters["min_spins"])
+    having_clauses.append("COUNT(*) <= %s")
+    params.append(filters["max_spins"])
+
+    query += " HAVING " + " AND ".join(having_clauses)
+    return query, params
+
+def add_one_calendar_month(date_value):
+    month = date_value.month + 1
+    year = date_value.year
+    if month > 12:
+        month = 1
+        year += 1
+
+    max_day = calendar.monthrange(year, month)[1]
+    return date_value.replace(year=year, month=month, day=min(date_value.day, max_day))
+
+def validate_date_range(start_date, end_date):
+    try:
+        start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        return "日期格式錯誤，請使用 YYYY-MM-DD"
+
+    if start > end:
+        return "開始日期必須小於或等於結束日期"
+
+    if end > add_one_calendar_month(start):
+        return "時間區間不可超過一個月"
+
+    return None
+
 @app.route('/api/players', methods=['GET'])
 def get_players():
-    """獲取在特定日期投注的玩家 ID 清單，支援多維度篩選（新/老玩家、贏/輸錢玩家）。"""
-    target_date = request.args.get('date')
-    new_player = request.args.get('new_player') == 'true'
-    old_player = request.args.get('old_player') == 'true'
-    win_player = request.args.get('win_player') == 'true'
-    lose_player = request.args.get('lose_player') == 'true'
+    """獲取在特定日期或時間區間投注的玩家 ID 清單，支援多維度篩選（新/老玩家、贏/輸錢玩家、最大旋轉數）。"""
+    start_date = request.args.get('start_date') or request.args.get('date')
+    end_date = request.args.get('end_date') or request.args.get('date')
+    filters = get_filter_args()
     
-    if not target_date:
-        return jsonify({"error": "缺少必要參數 'date'"}), 400
+    if not start_date or not end_date:
+        return jsonify({"error": "缺少必要參數 'start_date' 或 'end_date'"}), 400
+
+    range_error = validate_date_range(start_date, end_date)
+    if range_error:
+        return jsonify({"error": range_error}), 400
         
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # 基礎 SQL：串接 player_daily_flow_check (日流水明細) 與 player_stats (註冊統計資訊)
-        query = """
-        SELECT p.player_id 
-        FROM public.player_daily_flow_check p
-        LEFT JOIN public.player_stats s ON p.player_id = s.player_id
-        WHERE p.bet_at::date = %s
-        """
-        params = [target_date]
-        
-        # 1. 玩家年齡篩選：新玩家為今日首次投注，老玩家為昨日之前已投注
-        if new_player and not old_player:
-            query += " AND s.first_spin_date = %s"
-            params.append(target_date)
-        elif old_player and not new_player:
-            query += " AND (s.first_spin_date < %s OR s.first_spin_date IS NULL)"
-            params.append(target_date)
-            
-        query += " GROUP BY p.player_id"
-        
-        # 2. 玩家當日盈虧篩選：計算當日累積 net_profit = (總派彩 - 總投注)
-        having_clauses = []
-        if win_player and not lose_player:
-            having_clauses.append("SUM(p.total_prize - p.bet_amount) > 0")  # 贏錢玩家
-        elif lose_player and not win_player:
-            having_clauses.append("SUM(p.total_prize - p.bet_amount) <= 0") # 輸錢玩家 (含平局)
-            
-        if having_clauses:
-            query += " HAVING " + " AND ".join(having_clauses)
-            
-        query += " ORDER BY p.player_id;"
-        
+
+        subquery, params = build_filtered_players_subquery(start_date, end_date, filters)
+        query = f"SELECT player_id FROM ({subquery}) filtered_players ORDER BY player_id;"
         cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
         # 回傳字串化的玩家 ID 陣列
         players = [str(row[0]) for row in rows]
         return jsonify(players)
     except Exception as e:
-        print(f"查詢特定條件玩家清單失敗 ({target_date}): {e}", file=sys.stderr)
+        print(f"查詢特定條件玩家清單失敗 ({start_date} ~ {end_date}): {e}", file=sys.stderr)
         return jsonify({"error": str(e)}), 500
     finally:
         if conn:
@@ -166,45 +227,76 @@ def get_players():
 
 @app.route('/api/data', methods=['GET'])
 def get_data():
-    """獲取指定日期 and 玩家的完整投注流水明細（包含 bet_type 欄位，照時間排序）。"""
-    target_date = request.args.get('date')
+    """獲取指定日期區間 and 玩家的完整投注流水明細（包含 bet_type 欄位，照時間排序）。"""
+    start_date = request.args.get('start_date') or request.args.get('date')
+    end_date = request.args.get('end_date') or request.args.get('date')
     player_id = request.args.get('player_id')
+    filters = get_filter_args()
     
-    if not target_date or not player_id:
-        return jsonify({"error": "缺少參數 'date' 或 'player_id'"}), 400
+    if not start_date or not end_date or not player_id:
+        return jsonify({"error": "缺少參數 'start_date', 'end_date' 或 'player_id'"}), 400
+
+    range_error = validate_date_range(start_date, end_date)
+    if range_error:
+        return jsonify({"error": range_error}), 400
+
+    if player_id.upper() == 'ALL':
+        return jsonify({"error": "已移除所有玩家功能，請選擇單一玩家 ID"}), 400
         
     conn = None
     try:
         conn = get_db_connection()
-        # 使用 RealDictCursor 回傳字典物件
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        query = """
-        SELECT 
-            player_id, 
-            bet_at, 
-            slot_id, 
-            bet_type,
-            has_free_game, 
-            bet_amount, 
-            total_prize 
-        FROM 
-            public.player_daily_flow_check 
-        WHERE 
-            bet_at::date = %s AND player_id = %s
-        ORDER BY 
-            bet_at ASC;
+
+        subquery, subparams = build_filtered_players_subquery(start_date, end_date, filters)
+
+        query = f"""
+            SELECT 
+                d.player_id,
+                d.bet_at,
+                d.slot_id,
+                d.bet_type,
+                d.has_free_game,
+                d.bet_amount,
+                d.total_prize,
+                s.first_spin_date AS stats_first_spin_date,
+                s.total_bet_amount AS stats_total_bet_amount,
+                s.total_win_amount AS stats_total_win_amount,
+                s.last_spin_at AS stats_last_spin_at,
+                stats_spin_counts.total_spins AS stats_spin_count
+            FROM 
+                public.player_daily_flow_check d
+            LEFT JOIN
+                public.player_stats s ON d.player_id = s.player_id
+            LEFT JOIN (
+                SELECT player_id, COUNT(*) AS total_spins
+                FROM public.player_daily_flow_check
+                GROUP BY player_id
+            ) stats_spin_counts ON d.player_id = stats_spin_counts.player_id
+            WHERE 
+                d.play_date >= %s AND d.play_date <= %s
+                AND d.player_id IN ({subquery})
+                AND d.player_id = %s
+            ORDER BY 
+                d.bet_at ASC;
         """
-        cursor.execute(query, (target_date, player_id))
+        params = [start_date, end_date] + subparams + [player_id]
+            
+        cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
         
         # 將 datetime 物件轉換為格式化字串以利 JSON 序列化
         for row in rows:
             if row['bet_at']:
                 row['bet_at'] = row['bet_at'].strftime('%Y-%m-%d %H:%M:%S')
+            if row.get('stats_first_spin_date'):
+                row['stats_first_spin_date'] = row['stats_first_spin_date'].strftime('%Y-%m-%d')
+            if row.get('stats_last_spin_at'):
+                row['stats_last_spin_at'] = row['stats_last_spin_at'].strftime('%Y-%m-%d %H:%M:%S')
                 
         return jsonify(rows)
     except Exception as e:
-        print(f"獲取玩家 {player_id} 於日期 {target_date} 的投注明細失敗: {e}", file=sys.stderr)
+        print(f"獲取玩家 {player_id} 於日期區間 {start_date} ~ {end_date} 的投注明細失敗: {e}", file=sys.stderr)
         return jsonify({"error": str(e)}), 500
     finally:
         if conn:

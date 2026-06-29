@@ -52,11 +52,55 @@
           </div>
         </div>
 
+        <!-- 日期篩選模式 -->
         <div class="form-group">
+          <label id="label-date-mode" for="date-mode-select">Date Filter Mode</label>
+          <select id="date-mode-select" class="form-control">
+            <option value="single" id="opt-date-mode-single">Single Date</option>
+            <option value="range" id="opt-date-mode-range">Time Interval</option>
+          </select>
+        </div>
+
+        <!-- 單一日期選擇 -->
+        <div class="form-group" id="container-single-date">
           <label id="label-active-date" for="date-select">Active Date (Partition)</label>
           <select id="date-select" class="form-control">
             <option value="" id="opt-placeholder-date">(Loading dates...)</option>
           </select>
+        </div>
+
+        <!-- 時間區間選擇 -->
+        <div class="form-group" id="container-range-date" style="display: none;">
+          <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 0.5rem; align-items: end;">
+            <div style="min-width: 0;">
+              <label id="label-start-date" for="date-start-select" style="margin-bottom: 0.3rem;">Start Date</label>
+              <select id="date-start-select" class="form-control">
+                <option value="">(Loading...)</option>
+              </select>
+            </div>
+            <span style="color: var(--text-secondary); font-weight: 700; padding-bottom: 0.75rem;">~</span>
+            <div style="min-width: 0;">
+              <label id="label-end-date" for="date-end-select" style="margin-bottom: 0.3rem;">End Date</label>
+              <select id="date-end-select" class="form-control">
+                <option value="">(Loading...)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Spin 數範圍篩選 -->
+        <div class="form-group">
+          <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 0.5rem; align-items: end;">
+            <div style="min-width: 0;">
+              <label id="label-min-spins" for="input-min-spins">Min Spin Count</label>
+              <input type="number" id="input-min-spins" class="form-control" value="0" min="0" step="1">
+            </div>
+            <span style="color: var(--text-secondary); font-weight: 700; padding-bottom: 0.75rem;">~</span>
+            <div style="min-width: 0;">
+              <label id="label-max-spins" for="input-max-spins">Max Spin Count</label>
+              <input type="number" id="input-max-spins" class="form-control" value="10000" min="0" step="1">
+            </div>
+          </div>
         </div>
 
         <div class="form-group">
@@ -72,31 +116,64 @@
 
     <!-- Right Column: Visual Dashboard -->
     <div class="analytics-content">
-      <!-- Summary Metrics Grid -->
-      <div class="metrics-grid">
-        <div class="metric-card">
-          <span id="label-stat-spins" class="metric-label">Daily Spins</span>
-          <span id="metric-total-spins" class="metric-value">0</span>
+      <!-- Summary Metrics -->
+      <div class="metrics-section">
+        <h2 id="metrics-player-title" class="panel-title">Player Total Info</h2>
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span id="label-stat-total-spins" class="metric-label">Total Spins</span>
+            <span id="metric-stats-spins" class="metric-value">0</span>
+          </div>
+          <div class="metric-card">
+            <span id="label-stat-total-wager" class="metric-label">Total Wagered (IDR)</span>
+            <span id="metric-stats-total-wager" class="metric-value">0 IDR</span>
+          </div>
+          <div class="metric-card">
+            <span id="label-stat-total-payout" class="metric-label">Total Payouts (IDR)</span>
+            <span id="metric-stats-total-payout" class="metric-value">0 IDR</span>
+          </div>
+          <div class="metric-card">
+            <span id="label-stat-total-net" class="metric-label">Net Return (IDR)</span>
+            <span id="metric-stats-net-profit" class="metric-value">0 IDR</span>
+          </div>
+          <div class="metric-card">
+            <span id="label-stat-first-spin" class="metric-label">First Spin Date</span>
+            <span id="metric-stats-first-spin" class="metric-value">--</span>
+          </div>
+          <div class="metric-card">
+            <span id="label-stat-last-update" class="metric-label">Last Update Time</span>
+            <span id="metric-stats-last-update" class="metric-value">--</span>
+          </div>
         </div>
-        <div class="metric-card">
-          <span id="label-stat-wager" class="metric-label">Total Wagered (IDR)</span>
-          <span id="metric-total-wager" class="metric-value">0 IDR</span>
-        </div>
-        <div class="metric-card">
-          <span id="label-stat-payout" class="metric-label">Total Payouts (IDR)</span>
-          <span id="metric-total-payout" class="metric-value">0 IDR</span>
-        </div>
-        <div class="metric-card">
-          <span id="label-stat-net" class="metric-label">Net Return (IDR)</span>
-          <span id="metric-net-profit" class="metric-value">0 IDR</span>
-        </div>
-        <div class="metric-card">
-          <span id="label-stat-switches" class="metric-label">Game Switches</span>
-          <span id="metric-game-switches" class="metric-value" style="color: var(--warning);">0</span>
-        </div>
-        <div class="metric-card">
-          <span id="label-stat-free" class="metric-label">Free Game Spins</span>
-          <span id="metric-free-games" class="metric-value" style="color: var(--success);">0</span>
+      </div>
+
+      <div class="metrics-section">
+        <h2 id="metrics-range-title" class="panel-title">Range Info</h2>
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span id="label-stat-spins" class="metric-label">Range Spins</span>
+            <span id="metric-total-spins" class="metric-value">0</span>
+          </div>
+          <div class="metric-card">
+            <span id="label-stat-wager" class="metric-label">Range Wagered (IDR)</span>
+            <span id="metric-total-wager" class="metric-value">0 IDR</span>
+          </div>
+          <div class="metric-card">
+            <span id="label-stat-payout" class="metric-label">Range Payouts (IDR)</span>
+            <span id="metric-total-payout" class="metric-value">0 IDR</span>
+          </div>
+          <div class="metric-card">
+            <span id="label-stat-net" class="metric-label">Range Net Return (IDR)</span>
+            <span id="metric-net-profit" class="metric-value">0 IDR</span>
+          </div>
+          <div class="metric-card">
+            <span id="label-stat-switches" class="metric-label">Game Switches</span>
+            <span id="metric-game-switches" class="metric-value" style="color: var(--warning);">0</span>
+          </div>
+          <div class="metric-card">
+            <span id="label-stat-free" class="metric-label">Free Game Spins</span>
+            <span id="metric-free-games" class="metric-value" style="color: var(--success);">0</span>
+          </div>
         </div>
       </div>
 
@@ -115,6 +192,7 @@
             <thead>
               <tr>
                 <th id="th-seq">Play Seq</th>
+                <th id="th-player">Player ID</th>
                 <th id="th-time">Timestamp (bet_at)</th>
                 <th id="th-slot">Slot ID</th>
                 <th id="th-bet-type">Bet Type</th>
@@ -128,7 +206,7 @@
             </thead>
             <tbody id="table-body">
               <tr>
-                <td id="td-empty" colspan="10" style="text-align: center; color: var(--text-secondary); padding: 2rem;">
+                <td id="td-empty" colspan="11" style="text-align: center; color: var(--text-secondary); padding: 2rem;">
                   Please select a Date and Player ID from the filter sidebar.
                 </td>
               </tr>
