@@ -47,6 +47,13 @@ def load_db_config():
         return default_config
 
 db_pool = None
+dates_cache = {
+    "expires_at": None,
+    "dates": None,
+}
+DATES_CACHE_TTL_SECONDS = 300
+QUERY_TIMEOUT_MS = 30000
+PLAYER_DAILY_SUMMARY = "public.player_daily_summary"
 
 def init_db_pool():
     """初始化資料庫連線池，並自動確認/建立索引。"""
@@ -78,6 +85,7 @@ def init_db_pool():
         except Exception as idx_err:
             print(f"警告：自動建立索引失敗: {idx_err}", file=sys.stderr)
         finally:
+            conn.autocommit = False
             db_pool.putconn(conn)
     except Exception as e:
         print("\n=== 資料庫連線錯誤 (DATABASE CONNECTION ERROR) ===", file=sys.stderr)
@@ -90,13 +98,44 @@ def get_db_connection():
     global db_pool
     if db_pool is None:
         init_db_pool()
-    return db_pool.getconn()
+    conn = db_pool.getconn()
+    conn.autocommit = False
+    return conn
 
 def release_db_connection(conn):
     """將連線釋放回連線池。"""
     global db_pool
     if db_pool and conn:
+        try:
+            if not conn.closed:
+                conn.rollback()
+        except Exception as rollback_err:
+            print(f"Failed to reset database connection before returning it to the pool: {rollback_err}", file=sys.stderr)
         db_pool.putconn(conn)
+
+def apply_query_timeout(cursor):
+    cursor.execute("SET LOCAL statement_timeout = %s", (QUERY_TIMEOUT_MS,))
+
+def db_error_response(error):
+    error_text = str(error)
+    if "statement timeout" in error_text or "canceling statement due to statement timeout" in error_text:
+        return jsonify({"error": "查詢超過 30 秒，請縮小範圍或重新送出請求"}), 504
+    return jsonify({"error": error_text}), 500
+
+def first_column(row):
+    if isinstance(row, dict):
+        return next(iter(row.values()))
+    return row[0]
+
+def is_player_daily_summary_available(cursor):
+    cursor.execute("""
+        SELECT COALESCE((
+            SELECT c.relkind = 'm' AND c.relispopulated
+            FROM pg_class c
+            WHERE c.oid = to_regclass(%s)
+        ), false) AS is_available;
+    """, (PLAYER_DAILY_SUMMARY,))
+    return bool(first_column(cursor.fetchone()))
 
 # ----------------------------------------------------
 # 靜態網頁檔案託管路由
@@ -117,10 +156,14 @@ def serve_static(path):
 @app.route('/api/dates', methods=['GET'])
 def get_dates():
     """獲取資料表中有投注紀錄的所有不重複日期清單（遞減排序），使用遞迴 CTE 鬆散索引掃描優化。"""
+    if dates_cache["dates"] is not None and dates_cache["expires_at"] and datetime.utcnow() < dates_cache["expires_at"]:
+        return jsonify(dates_cache["dates"])
+
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        apply_query_timeout(cursor)
         query = """
         WITH RECURSIVE t AS (
            (SELECT (bet_at::date) AS play_date FROM public.slot_parent_bet WHERE bet_at IS NOT NULL ORDER BY 1 DESC LIMIT 1)
@@ -135,10 +178,12 @@ def get_dates():
         rows = cursor.fetchall()
         # 格式化日期為 YYYY-MM-DD 字串陣列
         dates = [row[0].strftime('%Y-%m-%d') for row in rows]
+        dates_cache["dates"] = dates
+        dates_cache["expires_at"] = datetime.utcnow() + timedelta(seconds=DATES_CACHE_TTL_SECONDS)
         return jsonify(dates)
     except Exception as e:
         print(f"獲取日期清單失敗: {e}", file=sys.stderr)
-        return jsonify({"error": str(e)}), 500
+        return db_error_response(e)
     finally:
         if conn:
             release_db_connection(conn)
@@ -171,12 +216,55 @@ def get_filter_args():
         "max_spins": max_spins,
     }
 
-def build_filtered_players_subquery(start_date, end_date, filters, player_id_filter=None):
+def build_filtered_players_subquery(start_date, end_date, filters, player_id_filter=None, use_summary=False):
     """Build the reusable filtered-player subquery and params."""
     start_day, end_day, end_exclusive = get_date_range_values(start_date, end_date)
 
     # 僅在有指定新/舊玩家篩選條件時才進行與 player_stats 表的 LEFT JOIN
     use_stats_join = (filters["new_player"] and not filters["old_player"]) or (filters["old_player"] and not filters["new_player"])
+
+    if use_summary:
+        if use_stats_join:
+            query = """
+                SELECT p.player_id
+                FROM public.player_daily_summary p
+                LEFT JOIN public.player_stats s ON p.player_id = s.player_id
+                WHERE p.play_date >= %s AND p.play_date <= %s
+            """
+        else:
+            query = """
+                SELECT p.player_id
+                FROM public.player_daily_summary p
+                WHERE p.play_date >= %s AND p.play_date <= %s
+            """
+        params = [start_day, end_day]
+
+        if player_id_filter is not None:
+            query += " AND p.player_id = %s"
+            params.append(player_id_filter)
+
+        if filters["new_player"] and not filters["old_player"]:
+            query += " AND s.first_spin_date >= %s AND s.first_spin_date <= %s"
+            params.extend([start_day, end_day])
+        elif filters["old_player"] and not filters["new_player"]:
+            query += " AND s.first_spin_date < %s"
+            params.append(start_day)
+
+        query += " GROUP BY p.player_id"
+
+        having_clauses = []
+        if filters["win_player"] and not filters["lose_player"]:
+            having_clauses.append("SUM(p.net_profit) > 0")
+        elif filters["lose_player"] and not filters["win_player"]:
+            having_clauses.append("SUM(p.net_profit) <= 0")
+
+        having_clauses.append("SUM(p.spin_count) >= %s")
+        params.append(filters["min_spins"])
+        having_clauses.append("SUM(p.spin_count) <= %s")
+        params.append(filters["max_spins"])
+
+        query += " HAVING " + " AND ".join(having_clauses)
+        return query, params
     
     if use_stats_join:
         query = """
@@ -269,8 +357,10 @@ def get_players():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        apply_query_timeout(cursor)
 
-        subquery, params = build_filtered_players_subquery(start_date, end_date, filters)
+        use_summary = is_player_daily_summary_available(cursor)
+        subquery, params = build_filtered_players_subquery(start_date, end_date, filters, use_summary=use_summary)
         query = f"SELECT player_id FROM ({subquery}) filtered_players ORDER BY player_id;"
         cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
@@ -279,7 +369,7 @@ def get_players():
         return jsonify(players)
     except Exception as e:
         print(f"查詢特定條件玩家清單失敗 ({start_date} ~ {end_date}): {e}", file=sys.stderr)
-        return jsonify({"error": str(e)}), 500
+        return db_error_response(e)
     finally:
         if conn:
             release_db_connection(conn)
@@ -306,8 +396,10 @@ def get_data():
     try:
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+        apply_query_timeout(cursor)
 
-        subquery, subparams = build_filtered_players_subquery(start_date, end_date, filters, player_id)
+        use_summary = is_player_daily_summary_available(cursor)
+        subquery, subparams = build_filtered_players_subquery(start_date, end_date, filters, player_id, use_summary=use_summary)
         start_day, _, end_exclusive = get_date_range_values(start_date, end_date)
 
         query = f"""
@@ -358,7 +450,7 @@ def get_data():
         return jsonify(rows)
     except Exception as e:
         print(f"獲取玩家 {player_id} 於日期區間 {start_date} ~ {end_date} 的投注明細失敗: {e}", file=sys.stderr)
-        return jsonify({"error": str(e)}), 500
+        return db_error_response(e)
     finally:
         if conn:
             release_db_connection(conn)

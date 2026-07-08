@@ -4,6 +4,7 @@
 let analyzedData = [];      // 用於快取目前所選玩家在指定日期的所有旋轉紀錄
 let currentLang = 'zh';     // 語系設定：預設為繁體中文 ('zh')，支援切換為英文 ('en')
 let currentPlayersRequestController = null;
+let currentDataRequestController = null;
 
 // DOM 元素參考
 const dateModeSelect = document.getElementById('date-mode-select');
@@ -614,10 +615,20 @@ function repopulatePlayerDropdown(startDate, endDate, selectPlayerId = null) {
 }
 
 function loadAnalyzedData(startDate, endDate, player_id) {
+  if (currentDataRequestController) {
+    currentDataRequestController.abort();
+    currentDataRequestController = null;
+  }
+
   if (!player_id) {
     resetDashboardState();
     return;
   }
+  currentDataRequestController = new AbortController();
+  const requestController = currentDataRequestController;
+  const timeoutId = setTimeout(() => {
+    requestController.abort();
+  }, 30000);
   
   const newPlayer = checkboxNewPlayer.checked;
   const oldPlayer = checkboxOldPlayer.checked;
@@ -638,9 +649,10 @@ function loadAnalyzedData(startDate, endDate, player_id) {
   queryParams.set('lose_player', losePlayer);
   queryParams.set('min_spins', minSpins);
   queryParams.set('max_spins', maxSpins);
+  tableBody.innerHTML = `<tr><td colspan="11" style="text-align: center; color: var(--text-secondary); font-weight: bold;">${translations[currentLang].placeholderLoadingPlayers}</td></tr>`;
   
   // 自 API /api/data 獲取指定日期和玩家的投注紀錄，並送入前端進行即時計算
-  fetch(`/api/data?${queryParams.toString()}`)
+  fetch(`/api/data?${queryParams.toString()}`, { signal: requestController.signal })
     .then(res => {
       if (!res.ok) {
         return res.json().then(data => { throw new Error(data.error || "伺服器錯誤"); });
@@ -648,11 +660,22 @@ function loadAnalyzedData(startDate, endDate, player_id) {
       return res.json();
     })
     .then(records => {
+      if (currentDataRequestController !== requestController) return;
       processAndRender(records);
     })
     .catch(err => {
+      if (err.name === 'AbortError' && currentDataRequestController !== requestController) return;
+      const message = err.name === 'AbortError'
+        ? translations[currentLang].filterTimeoutMessage
+        : err.message;
       console.error(`讀取玩家 ${player_id} 於日期範圍 ${startDate} ~ ${endDate} 的投注明細失敗:`, err);
-      tableBody.innerHTML = `<tr><td colspan="11" style="text-align: center; color: var(--danger); font-weight: bold;">⚠️ 載入失敗: ${err.message}</td></tr>`;
+      tableBody.innerHTML = `<tr><td colspan="11" style="text-align: center; color: var(--danger); font-weight: bold;">⚠️ 載入失敗: ${message}</td></tr>`;
+    })
+    .finally(() => {
+      clearTimeout(timeoutId);
+      if (currentDataRequestController === requestController) {
+        currentDataRequestController = null;
+      }
     });
 }
 
