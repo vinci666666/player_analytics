@@ -5,6 +5,8 @@ let analyzedData = [];      // 用於快取目前所選玩家在指定日期的�
 let currentLang = 'zh';     // 語系設定：預設為繁體中文 ('zh')，支援切換為英文 ('en')
 let currentPlayersRequestController = null;
 let currentDataRequestController = null;
+let monthlyDataCache = [];
+let gameDataCache = [];
 
 // DOM 元素參考
 const dateModeSelect = document.getElementById('date-mode-select');
@@ -22,6 +24,32 @@ const checkboxNewPlayer = document.getElementById('checkbox-new-player');
 const checkboxOldPlayer = document.getElementById('checkbox-old-player');
 const checkboxWinPlayer = document.getElementById('checkbox-win-player');
 const checkboxLosePlayer = document.getElementById('checkbox-lose-player');
+const pageNavItems = document.querySelectorAll('.page-nav-item');
+const monthlyContent = document.getElementById('monthly-analysis-content');
+const monthlyMonthSelect = document.getElementById('monthly-month-select');
+const btnLoadMonthly = document.getElementById('btn-load-monthly');
+const monthlyStatus = document.getElementById('monthly-status');
+const gameContent = document.getElementById('game-analysis-content');
+const gameSlotSelect = document.getElementById('game-slot-select');
+const gameStartDate = document.getElementById('game-start-date');
+const gameEndDate = document.getElementById('game-end-date');
+const btnLoadGame = document.getElementById('btn-load-game');
+const gameStatus = document.getElementById('game-status');
+
+pageNavItems.forEach((item) => {
+  item.addEventListener('click', (event) => {
+    const page = item.dataset.page;
+    if (page === 'monthly' || page === 'game') {
+      event.preventDefault();
+      setActivePage(page);
+    } else if (page === 'player') {
+      event.preventDefault();
+      setActivePage('player');
+    } else {
+      event.preventDefault();
+    }
+  });
+});
 
 // 指標數據顯示元素參考
 const metricStatsSpins = document.getElementById('metric-stats-spins');
@@ -126,7 +154,65 @@ const translations = {
     tooltipFreeGame: "⭐ Free Game Spin",
     tooltipSwitch: "🔄 Switched Slot Game",
     tooltipNewGame: "New Game ID",
-    tooltipCumShort: "Cum. Profit"
+    tooltipCumShort: "Cum. Profit",
+    navTitle: "Analytics Hub",
+    navEyebrow: "ANALYTICS",
+    monthlyEyebrow: "MONTHLY ANALYSIS",
+    gameEyebrow: "GAME ANALYSIS",
+    navHome: "Home",
+    navMonthly: "Monthly Analysis",
+    navGame: "Game Analysis",
+    navPlayer: "Player Analysis",
+    monthlyTitle: "Monthly Analysis",
+    monthlyDescription: "Daily operating metrics and monthly trends",
+    gameTitle: "Game Analysis",
+    gameDescription: "Daily operating and player performance by game ID",
+    labelAnalysisMonth: "Analysis Month",
+    labelGame: "Game",
+    allGames: "All Games",
+    loadMonthly: "Load Monthly Analysis",
+    loadGame: "Load Game Analysis",
+    avgPlayers: "Avg. Players",
+    avgDnu: "Avg. DNU",
+    avgRtp: "Avg. RTP",
+    totalBet: "Total Wagered",
+    totalWin: "Total Payout",
+    dataDays: "Data Days",
+    monthlyLoading: "Loading monthly analysis…",
+    monthlyNoData: "No monthly analysis data for the selected dates.",
+    monthlyLoaded: "Loaded {days} days from {start} to {end}.",
+    monthlyDateError: "Unable to load available dates. Please select dates manually.",
+    monthlyLoadError: "Failed to load monthly analysis: {message}",
+    gameLoading: "Loading game analysis…",
+    gameNoData: "No game analysis data for the selected dates.",
+    gameLoaded: "Loaded game data from {start} to {end}.",
+    gameDateError: "Unable to load available dates. Please select dates manually.",
+    gameLoadError: "Failed to load game analysis: {message}",
+    gameOption: "{name} (ID {slot})",
+    chartDailyRtp: "Daily RTP Trend",
+    chartDailyGgr: "Daily GGR Trend",
+    chartDailyPlayers: "Daily Player Count",
+    chartDailyDnu: "Daily DNU",
+    chartRetention: "Retention Trend",
+    chartBetTypePlayers: "Bet Type Player Count",
+    chartGamePlayers: "Game Player Count Trend",
+    chartGameGgr: "Daily Game GGR",
+    chartGameRtp: "Game RTP Trend",
+    chartGameRetention: "Game Retention Trend",
+    chartGameBetTypePlayers: "Game Bet Type Player Count",
+    axisPlayers: "Players",
+    axisRtp: "RTP (%)",
+    axisRetention: "Retention (%)",
+    axisGgr: "GGR (IDR)",
+    serverError: "Server error",
+    noDates: "No dates found in database",
+    dateOrderError: "Start date must be before or equal to End date",
+    rangeLimitError: "Time interval must be within one month",
+    loading: "Loading...",
+    noPlayers: "(No players match filters)",
+    playerOption: "Player ID: {player}",
+    loadFailed: "Load failed: {message}",
+    showingRecords: "Showing first 5,000 of {total} records. Please narrow down the date interval or adjust the spin range."
   },
   zh: {
     title: "iGaming 數據分析",
@@ -210,7 +296,65 @@ const translations = {
     tooltipFreeGame: "⭐ 免費旋轉",
     tooltipSwitch: "🔄 切換老虎機遊戲",
     tooltipNewGame: "新遊戲 ID",
-    tooltipCumShort: "累計利潤"
+    tooltipCumShort: "累計利潤",
+    navTitle: "分析中心",
+    navEyebrow: "數據分析",
+    monthlyEyebrow: "月分析",
+    gameEyebrow: "遊戲分析",
+    navHome: "主頁",
+    navMonthly: "月分析",
+    navGame: "遊戲分析",
+    navPlayer: "玩家分析",
+    monthlyTitle: "月分析",
+    monthlyDescription: "每日營運指標與月度趨勢",
+    gameTitle: "遊戲分析",
+    gameDescription: "依遊戲 ID 查看每日營運與玩家表現",
+    labelAnalysisMonth: "分析月份",
+    labelGame: "遊戲",
+    allGames: "全部遊戲",
+    loadMonthly: "載入月分析",
+    loadGame: "載入遊戲分析",
+    avgPlayers: "平均玩家數",
+    avgDnu: "平均 DNU",
+    avgRtp: "平均 RTP",
+    totalBet: "總投注額",
+    totalWin: "總派彩",
+    dataDays: "資料天數",
+    monthlyLoading: "載入月分析資料中…",
+    monthlyNoData: "選取日期沒有月分析資料。",
+    monthlyLoaded: "已載入 {start} 至 {end} 的 {days} 天資料。",
+    monthlyDateError: "無法取得可用日期，請手動選擇日期。",
+    monthlyLoadError: "月分析載入失敗：{message}",
+    gameLoading: "載入遊戲分析資料中…",
+    gameNoData: "選取日期沒有遊戲分析資料。",
+    gameLoaded: "已載入 {start} 至 {end} 的遊戲資料。",
+    gameDateError: "無法取得可用日期，請手動選擇日期。",
+    gameLoadError: "遊戲分析載入失敗：{message}",
+    gameOption: "{name}（ID {slot}）",
+    chartDailyRtp: "每日 RTP 趨勢",
+    chartDailyGgr: "每日營收 (GGR) 趨勢",
+    chartDailyPlayers: "每日玩家數",
+    chartDailyDnu: "每日 DNU",
+    chartRetention: "Retention 趨勢",
+    chartBetTypePlayers: "Bet Type 玩家數",
+    chartGamePlayers: "遊戲玩家數趨勢",
+    chartGameGgr: "遊戲每日 GGR",
+    chartGameRtp: "遊戲 RTP 趨勢",
+    chartGameRetention: "遊戲 Retention 趨勢",
+    chartGameBetTypePlayers: "遊戲 Bet Type 玩家數",
+    axisPlayers: "玩家數",
+    axisRtp: "RTP (%)",
+    axisRetention: "Retention (%)",
+    axisGgr: "GGR (IDR)",
+    serverError: "伺服器錯誤",
+    noDates: "資料庫中無日期資料",
+    dateOrderError: "開始日期必須小於或等於結束日期",
+    rangeLimitError: "時間區間不可超過一個月",
+    loading: "載入中...",
+    noPlayers: "(此條件下查無玩家)",
+    playerOption: "玩家 ID: {player}",
+    loadFailed: "載入失敗：{message}",
+    showingRecords: "僅顯示前 5,000 筆紀錄（共 {total} 筆）。請縮小時間區間或調整 Spin 範圍以精簡資料。"
   }
 };
 
@@ -224,6 +368,45 @@ function updateLanguageUI() {
   document.getElementById('legend-curve').textContent = lang.legendCurve;
   document.getElementById('legend-fg').textContent = lang.legendFg;
   document.getElementById('legend-gs').textContent = lang.legendGs;
+  btnLangToggle.textContent = currentLang === 'zh' ? '繁中 / EN' : 'EN / 繁中';
+
+  document.getElementById('page-nav-title').textContent = lang.navTitle;
+  document.getElementById('page-nav-eyebrow').textContent = lang.navEyebrow;
+  document.getElementById('page-nav-home').textContent = lang.navHome;
+  document.getElementById('page-nav-monthly').textContent = lang.navMonthly;
+  document.getElementById('page-nav-game').textContent = lang.navGame;
+  document.getElementById('page-nav-player').textContent = lang.navPlayer;
+
+  document.getElementById('monthly-page-title').textContent = lang.monthlyTitle;
+  document.getElementById('monthly-eyebrow').textContent = lang.monthlyEyebrow;
+  document.getElementById('monthly-page-description').textContent = lang.monthlyDescription;
+  document.getElementById('monthly-label-month').textContent = lang.labelAnalysisMonth;
+  btnLoadMonthly.textContent = lang.loadMonthly;
+  document.getElementById('monthly-label-avg-players').textContent = lang.avgPlayers;
+  document.getElementById('monthly-label-avg-dnu').textContent = lang.avgDnu;
+  document.getElementById('monthly-label-avg-rtp').textContent = lang.avgRtp;
+  document.getElementById('monthly-label-total-bet').textContent = lang.totalBet;
+  document.getElementById('monthly-label-total-win').textContent = lang.totalWin;
+  document.getElementById('monthly-label-days').textContent = lang.dataDays;
+
+  document.getElementById('game-page-title').textContent = lang.gameTitle;
+  document.getElementById('game-eyebrow').textContent = lang.gameEyebrow;
+  document.getElementById('game-page-description').textContent = lang.gameDescription;
+  document.getElementById('game-label-slot').textContent = lang.labelGame;
+  document.getElementById('game-label-start-date').textContent = lang.labelStartDate;
+  document.getElementById('game-label-end-date').textContent = lang.labelEndDate;
+  btnLoadGame.textContent = lang.loadGame;
+  document.getElementById('game-label-avg-players').textContent = lang.avgPlayers;
+  document.getElementById('game-label-avg-dnu').textContent = lang.avgDnu;
+  document.getElementById('game-label-avg-rtp').textContent = lang.avgRtp;
+  document.getElementById('game-label-total-bet').textContent = lang.totalBet;
+  document.getElementById('game-label-total-win').textContent = lang.totalWin;
+  document.getElementById('game-label-days').textContent = lang.dataDays;
+  Array.from(gameSlotSelect.options).forEach(option => {
+    option.textContent = option.value === 'ALL'
+      ? lang.allGames
+      : lang.gameOption.replace('{name}', option.dataset.gameName || option.value).replace('{slot}', option.value);
+  });
   
   // 篩選器面板區塊
   document.getElementById('filter-title').textContent = lang.filterTitle;
@@ -292,6 +475,9 @@ function updateLanguageUI() {
   if (tdEmpty) {
     tdEmpty.textContent = lang.tdEmpty;
   }
+
+  if (monthlyDataCache.length) renderMonthlyCharts(monthlyDataCache);
+  if (gameDataCache.length) renderGameCharts(gameDataCache, gameSlotSelect.value || 'ALL');
 }
 
 // ----------------------------------------------------
@@ -410,7 +596,7 @@ function loadAvailableDates() {
   fetch('/api/dates')
     .then(res => {
       if (!res.ok) {
-        return res.json().then(data => { throw new Error(data.error || "伺服器錯誤"); });
+        return res.json().then(data => { throw new Error(data.error || translations[currentLang].serverError); });
       }
       return res.json();
     })
@@ -420,7 +606,7 @@ function loadAvailableDates() {
       dateEndSelect.innerHTML = '';
       
       if (dates.length === 0) {
-        const errMsg = currentLang === 'en' ? "No dates found in database" : "資料庫中無日期資料";
+        const errMsg = translations[currentLang].noDates;
         [dateSelect, dateStartSelect, dateEndSelect].forEach(sel => {
           const opt = document.createElement('option');
           opt.value = "";
@@ -485,13 +671,13 @@ function triggerLoadPlayers() {
   
   // 日期區間合法性驗證 (開始日期不得大於結束日期)
   if (startDate > endDate) {
-    playerSelect.innerHTML = `<option value="">${currentLang === 'en' ? "⚠️ Start date must be before or equal to End date" : "⚠️ 開始日期必須小於或等於結束日期"}</option>`;
+    playerSelect.innerHTML = `<option value="">⚠️ ${translations[currentLang].dateOrderError}</option>`;
     resetDashboardState();
     return;
   }
 
   if (mode === 'range' && isDateRangeOverOneMonth(startDate, endDate)) {
-    playerSelect.innerHTML = `<option value="">${currentLang === 'en' ? "⚠️ Time interval must be within one month" : "⚠️ 時間區間不可超過一個月"}</option>`;
+    playerSelect.innerHTML = `<option value="">⚠️ ${translations[currentLang].rangeLimitError}</option>`;
     resetDashboardState();
     return;
   }
@@ -512,7 +698,7 @@ function setFilterLoading(isLoading) {
   btnApplyFilters.style.opacity = isLoading ? '0.7' : '';
   btnApplyFilters.style.cursor = isLoading ? 'not-allowed' : '';
   document.getElementById('label-apply-filters').textContent = isLoading
-    ? (currentLang === 'en' ? 'Loading...' : '載入中...')
+    ? translations[currentLang].loading
     : translations[currentLang].labelApplyFilters;
 }
 
@@ -553,7 +739,7 @@ function loadPlayersForDate(startDate, endDate) {
   fetch(`/api/players?${queryParams.toString()}`, { signal: requestController.signal })
     .then(res => {
       if (!res.ok) {
-        return res.json().then(data => { throw new Error(data.error || "伺服器錯誤"); });
+        return res.json().then(data => { throw new Error(data.error || translations[currentLang].serverError); });
       }
       return res.json();
     })
@@ -587,7 +773,7 @@ function repopulatePlayerDropdown(startDate, endDate, selectPlayerId = null) {
   if (activePlayersList.length === 0) {
     const opt = document.createElement('option');
     opt.value = "";
-    opt.textContent = currentLang === 'en' ? "(No players match filters)" : "(此條件下查無玩家)";
+    opt.textContent = translations[currentLang].noPlayers;
     playerSelect.appendChild(opt);
     resetDashboardState();
     return;
@@ -602,7 +788,7 @@ function repopulatePlayerDropdown(startDate, endDate, selectPlayerId = null) {
   activePlayersList.forEach(p => {
     const opt = document.createElement('option');
     opt.value = p;
-    opt.textContent = currentLang === 'en' ? `Player ID: ${p}` : `玩家 ID: ${p}`;
+    opt.textContent = translations[currentLang].playerOption.replace('{player}', p);
     playerSelect.appendChild(opt);
   });
   
@@ -655,7 +841,7 @@ function loadAnalyzedData(startDate, endDate, player_id) {
   fetch(`/api/data?${queryParams.toString()}`, { signal: requestController.signal })
     .then(res => {
       if (!res.ok) {
-        return res.json().then(data => { throw new Error(data.error || "伺服器錯誤"); });
+        return res.json().then(data => { throw new Error(data.error || translations[currentLang].serverError); });
       }
       return res.json();
     })
@@ -669,7 +855,7 @@ function loadAnalyzedData(startDate, endDate, player_id) {
         ? translations[currentLang].filterTimeoutMessage
         : err.message;
       console.error(`讀取玩家 ${player_id} 於日期範圍 ${startDate} ~ ${endDate} 的投注明細失敗:`, err);
-      tableBody.innerHTML = `<tr><td colspan="11" style="text-align: center; color: var(--danger); font-weight: bold;">⚠️ 載入失敗: ${message}</td></tr>`;
+      tableBody.innerHTML = `<tr><td colspan="11" style="text-align: center; color: var(--danger); font-weight: bold;">⚠️ ${translations[currentLang].loadFailed.replace('{message}', message)}</td></tr>`;
     })
     .finally(() => {
       clearTimeout(timeoutId);
@@ -837,7 +1023,7 @@ function renderDashboard() {
         <td style="font-family: var(--font-mono); font-weight:600;">#${row.play_seq}</td>
         <td style="font-family: var(--font-mono); color: #818cf8;">${row.player_id}</td>
         <td style="color: var(--text-secondary);">${timestampStr}</td>
-        <td style="font-family: var(--font-mono);">${row.slot_id}</td>
+        <td style="font-family: var(--font-mono);">${formatGameDisplay(row.slot_id, row.game_name)}</td>
         <td style="font-size: 0.85rem;">${betTypeStr}</td>
         <td>${isSwitchedCell}</td>
         <td>${isFreeCell}</td>
@@ -856,7 +1042,7 @@ function renderDashboard() {
     htmlRuns.push(`
       <tr>
         <td colspan="11" style="text-align: center; color: var(--warning); font-weight: bold; padding: 1rem; background: rgba(245, 158, 11, 0.05);">
-          ⚠️ ${currentLang === 'en' ? `Showing first 5,000 of ${analyzedData.length} records. Please narrow down date interval or adjust spin range.` : `僅顯示前 5,000 筆紀錄（共 ${analyzedData.length} 筆）。請縮小時間區間或調整 Spin 範圍以精簡資料。`}
+          ⚠️ ${translations[currentLang].showingRecords.replace('{total}', analyzedData.length)}
         </td>
       </tr>
     `);
@@ -1134,12 +1320,19 @@ function getBetTypeColor(betType) {
   return '#94a3b8';
 }
 
+function formatGameDisplay(slotId, gameName) {
+  const name = gameName || String(slotId);
+  return translations[currentLang].gameOption
+    .replace('{name}', name)
+    .replace('{slot}', slotId);
+}
+
 function buildChartCustomData(row, lang) {
   return [
     formatCurrency(row.net_profit),
     formatCurrency(row.bet_amount),
     formatCurrency(row.total_prize),
-    row.slot_id,
+    formatGameDisplay(row.slot_id, row.game_name),
     formatDateTimeForTooltip(row.bet_at),
     getBetTypeLabel(row.bet_type, lang),
     row.player_id
@@ -1181,6 +1374,281 @@ function getDefaultRangeStartDate(dates, endDate) {
   const candidates = dates.filter(d => new Date(`${d}T00:00:00`) >= minStart && d <= endDate);
   return candidates.length ? candidates[candidates.length - 1] : endDate;
 }
+
+function getPreviousCalendarMonthRange(latestDate) {
+  const latest = new Date(`${latestDate}T00:00:00`);
+  const currentMonthStart = new Date(latest.getFullYear(), latest.getMonth(), 1);
+  const previousMonthEnd = new Date(currentMonthStart.getTime() - 86400000);
+  const previousMonthStart = new Date(previousMonthEnd.getFullYear(), previousMonthEnd.getMonth(), 1);
+  const toDateInputValue = date => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  return {
+    startDate: toDateInputValue(previousMonthStart),
+    endDate: toDateInputValue(previousMonthEnd)
+  };
+}
+
+function getCalendarMonthRange(monthValue) {
+  const [yearText, monthText] = monthValue.split('-');
+  const year = Number(yearText);
+  const month = Number(monthText);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return null;
+  const end = new Date(year, month, 0);
+  const endDate = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+  return { startDate: `${monthValue}-01`, endDate };
+}
+
+function setActivePage(page) {
+  const isMonthly = page === 'monthly';
+  const isGame = page === 'game';
+  document.querySelector('main').classList.toggle('monthly-page', isMonthly);
+  document.querySelector('main').classList.toggle('game-page', isGame);
+  monthlyContent.hidden = !isMonthly;
+  gameContent.hidden = !isGame;
+
+  pageNavItems.forEach((item) => {
+    const active = item.dataset.page === page;
+    item.classList.toggle('active', active);
+    if (active) item.setAttribute('aria-current', 'page');
+    else item.removeAttribute('aria-current');
+  });
+
+  if (isMonthly && !monthlyMonthSelect.value) {
+    loadMonthlyDateDefaults();
+  }
+  if (isGame && !gameStartDate.value) {
+    loadGameDateDefaults();
+  }
+}
+
+function monthlyChartLayout(title, yTitle, extra = {}) {
+  return {
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(15, 23, 42, 0.4)',
+    margin: { l: 55, r: 20, t: 48, b: 45 },
+    title: { text: title, font: { color: '#f3f4f6', size: 15 } },
+    xaxis: { gridcolor: 'rgba(255,255,255,0.05)', tickfont: { color: '#94a3b8' } },
+    yaxis: { title: yTitle, gridcolor: 'rgba(255,255,255,0.05)', tickfont: { color: '#94a3b8' } },
+    legend: { font: { color: '#94a3b8' }, bgcolor: 'rgba(15, 23, 42, 0.85)' },
+    hovermode: 'x unified',
+    ...extra
+  };
+}
+
+function renderMonthlyCharts(rows) {
+  const lang = translations[currentLang];
+  const dates = rows.map(row => row.date);
+  const pct = value => Number(value || 0) * 100;
+  const money = value => Number(value || 0);
+  const common = { responsive: true, displaylogo: false, displayModeBar: false };
+
+  Plotly.newPlot('monthly-rtp-chart', [
+    { x: dates, y: rows.map(r => pct(r.rtp)), name: 'RTP', type: 'scatter', mode: 'lines+markers', line: { color: '#6366f1', width: 3 } },
+    { x: dates, y: rows.map(r => pct(r.odd_rtp)), name: 'Odd RTP', type: 'scatter', mode: 'lines+markers', line: { color: '#f59e0b', width: 2 } }
+  ], monthlyChartLayout(lang.chartDailyRtp, lang.axisRtp, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
+
+  Plotly.newPlot('monthly-ggr-chart', [
+    { x: dates, y: rows.map(r => money(r.total_win_amount) - money(r.total_bet_amount)), name: 'GGR', type: 'bar', marker: { color: '#10b981' } }
+  ], monthlyChartLayout(lang.chartDailyGgr, lang.axisGgr), common);
+
+  Plotly.newPlot('monthly-player-chart', [
+    { x: dates, y: rows.map(r => Number(r.player_count || 0)), name: 'Player Count', type: 'scatter', mode: 'lines+markers', line: { color: '#38bdf8', width: 3 } }
+  ], monthlyChartLayout(lang.chartDailyPlayers, lang.axisPlayers), common);
+
+  Plotly.newPlot('monthly-dnu-chart', [
+    { x: dates, y: rows.map(r => Number(r.dnu || 0)), name: 'DNU', type: 'bar', marker: { color: '#a78bfa' } }
+  ], monthlyChartLayout(lang.chartDailyDnu, lang.axisPlayers), common);
+
+  Plotly.newPlot('monthly-retention-chart', [
+    { x: dates, y: rows.map(r => pct(r.retention_1)), name: 'D1', type: 'scatter', mode: 'lines+markers', line: { color: '#10b981' } },
+    { x: dates, y: rows.map(r => pct(r.retention_3)), name: 'D3', type: 'scatter', mode: 'lines+markers', line: { color: '#f59e0b' } },
+    { x: dates, y: rows.map(r => pct(r.retention_7)), name: 'D7', type: 'scatter', mode: 'lines+markers', line: { color: '#ef4444' } }
+  ], monthlyChartLayout(lang.chartRetention, lang.axisRetention, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
+
+  Plotly.newPlot('monthly-bet-type-chart', [
+    { x: dates, y: rows.map(r => Number(r.bet_1_player_count || 0)), name: lang.betTypeNormal, type: 'scatter', mode: 'lines', line: { color: '#6366f1' } },
+    { x: dates, y: rows.map(r => Number(r.bet_2_player_count || 0)), name: lang.betTypeAnte, type: 'scatter', mode: 'lines', line: { color: '#f59e0b' } },
+    { x: dates, y: rows.map(r => Number(r.bet_3_player_count || 0)), name: lang.betTypeBuy, type: 'scatter', mode: 'lines', line: { color: '#10b981' } }
+  ], monthlyChartLayout(lang.chartBetTypePlayers, lang.axisPlayers), common);
+}
+
+function updateMonthlyMetrics(rows) {
+  const average = key => rows.reduce((sum, row) => sum + Number(row[key] || 0), 0) / rows.length;
+  const total = key => rows.reduce((sum, row) => sum + Number(row[key] || 0), 0);
+  document.getElementById('monthly-avg-players').textContent = formatCount(average('player_count'));
+  document.getElementById('monthly-avg-dnu').textContent = formatCount(average('dnu'));
+  document.getElementById('monthly-avg-rtp').textContent = `${(average('rtp') * 100).toFixed(2)}%`;
+  document.getElementById('monthly-total-bet').textContent = formatCurrency(total('total_bet_amount'));
+  document.getElementById('monthly-total-win').textContent = formatCurrency(total('total_win_amount'));
+  document.getElementById('monthly-days').textContent = formatCount(rows.length);
+}
+
+async function loadMonthlyDateDefaults() {
+  try {
+    const response = await fetch('/api/dates');
+    const dates = await response.json();
+    if (!Array.isArray(dates) || !dates.length) return;
+    const latestDate = dates[0];
+    const previousMonth = getPreviousCalendarMonthRange(latestDate);
+    monthlyMonthSelect.value = previousMonth.startDate.slice(0, 7);
+    loadMonthlyData();
+  } catch (error) {
+    monthlyStatus.textContent = translations[currentLang].monthlyDateError;
+  }
+}
+
+async function loadMonthlyData() {
+  const monthRange = getCalendarMonthRange(monthlyMonthSelect.value);
+  if (!monthRange) return;
+  const { startDate, endDate } = monthRange;
+  monthlyStatus.textContent = translations[currentLang].monthlyLoading;
+  try {
+    const response = await fetch(`/api/monthly?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`);
+    const rows = await response.json();
+    if (!response.ok) throw new Error(rows.error || 'Monthly API request failed');
+    if (!rows.length) {
+      monthlyStatus.textContent = translations[currentLang].monthlyNoData;
+      return;
+    }
+    monthlyDataCache = rows;
+    updateMonthlyMetrics(rows);
+    renderMonthlyCharts(rows);
+    monthlyStatus.textContent = translations[currentLang].monthlyLoaded.replace('{start}', startDate).replace('{end}', endDate).replace('{days}', rows.length);
+  } catch (error) {
+    monthlyStatus.textContent = translations[currentLang].monthlyLoadError.replace('{message}', error.message);
+  }
+}
+
+function aggregateGameRows(rows) {
+  const grouped = new Map();
+  rows.forEach(row => {
+    const key = row.date;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        date: key, player_count: 0, dnu: 0, total_spin_count: 0,
+        total_bet_amount: 0, total_win_amount: 0,
+        bet_1_player_count: 0, bet_2_player_count: 0, bet_3_player_count: 0,
+        retention_1: 0, retention_3: 0, retention_7: 0, _count: 0
+      });
+    }
+    const target = grouped.get(key);
+    ['player_count', 'dnu', 'total_spin_count', 'total_bet_amount', 'total_win_amount',
+      'bet_1_player_count', 'bet_2_player_count', 'bet_3_player_count'].forEach(field => {
+      target[field] += Number(row[field] || 0);
+    });
+    ['retention_1', 'retention_3', 'retention_7'].forEach(field => {
+      target[field] += Number(row[field] || 0);
+    });
+    target._count += 1;
+  });
+  return Array.from(grouped.values()).sort((a, b) => a.date.localeCompare(b.date)).map(row => ({
+    ...row,
+    retention_1: row.retention_1 / row._count,
+    retention_3: row.retention_3 / row._count,
+    retention_7: row.retention_7 / row._count,
+    rtp: row.total_bet_amount ? row.total_win_amount / row.total_bet_amount : 0
+  }));
+}
+
+function renderGameCharts(rows, selectedSlot) {
+  const lang = translations[currentLang];
+  const data = selectedSlot === 'ALL' ? aggregateGameRows(rows) : rows;
+  const dates = data.map(row => row.date);
+  const pct = value => Number(value || 0) * 100;
+  const common = { responsive: true, displaylogo: false, displayModeBar: false };
+
+  Plotly.newPlot('game-player-chart', [{ x: dates, y: data.map(r => Number(r.player_count || 0)), name: lang.axisPlayers, type: 'scatter', mode: 'lines+markers', line: { color: '#38bdf8', width: 3 } }], monthlyChartLayout(lang.chartGamePlayers, lang.axisPlayers), common);
+  Plotly.newPlot('game-ggr-chart', [{ x: dates, y: data.map(r => Number(r.total_win_amount || 0) - Number(r.total_bet_amount || 0)), name: 'GGR', type: 'bar', marker: { color: '#10b981' } }], monthlyChartLayout(lang.chartGameGgr, lang.axisGgr), common);
+  Plotly.newPlot('game-rtp-chart', [{ x: dates, y: data.map(r => pct(r.rtp)), name: 'RTP', type: 'scatter', mode: 'lines+markers', line: { color: '#6366f1', width: 3 } }], monthlyChartLayout(lang.chartGameRtp, lang.axisRtp, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
+  Plotly.newPlot('game-retention-chart', [
+    { x: dates, y: data.map(r => pct(r.retention_1)), name: 'D1', type: 'scatter', mode: 'lines+markers', line: { color: '#10b981' } },
+    { x: dates, y: data.map(r => pct(r.retention_3)), name: 'D3', type: 'scatter', mode: 'lines+markers', line: { color: '#f59e0b' } },
+    { x: dates, y: data.map(r => pct(r.retention_7)), name: 'D7', type: 'scatter', mode: 'lines+markers', line: { color: '#ef4444' } }
+  ], monthlyChartLayout(lang.chartGameRetention, lang.axisRetention, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
+  Plotly.newPlot('game-bet-type-chart', [
+    { x: dates, y: data.map(r => Number(r.bet_1_player_count || 0)), name: lang.betTypeNormal, type: 'scatter', mode: 'lines', line: { color: '#6366f1' } },
+    { x: dates, y: data.map(r => Number(r.bet_2_player_count || 0)), name: lang.betTypeAnte, type: 'scatter', mode: 'lines', line: { color: '#f59e0b' } },
+    { x: dates, y: data.map(r => Number(r.bet_3_player_count || 0)), name: lang.betTypeBuy, type: 'scatter', mode: 'lines', line: { color: '#10b981' } }
+  ], monthlyChartLayout(lang.chartGameBetTypePlayers, lang.axisPlayers), common);
+}
+
+function updateGameMetrics(rows, selectedSlot) {
+  const data = selectedSlot === 'ALL' ? aggregateGameRows(rows) : rows;
+  const average = key => data.reduce((sum, row) => sum + Number(row[key] || 0), 0) / data.length;
+  const total = key => data.reduce((sum, row) => sum + Number(row[key] || 0), 0);
+  document.getElementById('game-avg-players').textContent = formatCount(average('player_count'));
+  document.getElementById('game-avg-dnu').textContent = formatCount(average('dnu'));
+  document.getElementById('game-avg-rtp').textContent = `${(average('rtp') * 100).toFixed(2)}%`;
+  document.getElementById('game-total-bet').textContent = formatCurrency(total('total_bet_amount'));
+  document.getElementById('game-total-win').textContent = formatCurrency(total('total_win_amount'));
+  document.getElementById('game-days').textContent = formatCount(data.length);
+}
+
+async function loadGameDateDefaults() {
+  try {
+    const response = await fetch('/api/dates');
+    const dates = await response.json();
+    if (!Array.isArray(dates) || !dates.length) return;
+    const previousMonth = getPreviousCalendarMonthRange(dates[0]);
+    gameStartDate.value = previousMonth.startDate;
+    gameEndDate.value = previousMonth.endDate;
+    loadGameData();
+  } catch (error) {
+    gameStatus.textContent = translations[currentLang].gameDateError;
+  }
+}
+
+async function loadGameData() {
+  const startDate = gameStartDate.value;
+  const endDate = gameEndDate.value;
+  const selectedSlot = gameSlotSelect.value || 'ALL';
+  if (!startDate || !endDate) return;
+  gameStatus.textContent = translations[currentLang].gameLoading;
+  try {
+    const response = await fetch(`/api/game?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&slot_id=${encodeURIComponent(selectedSlot)}`);
+    const rows = await response.json();
+    if (!response.ok) throw new Error(rows.error || 'Game API request failed');
+    if (!rows.length) {
+      gameStatus.textContent = translations[currentLang].gameNoData;
+      return;
+    }
+    gameDataCache = rows;
+    if (selectedSlot === 'ALL') {
+      const games = new Map();
+      rows.forEach(row => games.set(String(row.slot_id), row.game_name || String(row.slot_id)));
+      const slots = [...games.keys()].sort((a, b) => Number(a) - Number(b));
+      const current = gameSlotSelect.value;
+      const lang = translations[currentLang];
+      gameSlotSelect.innerHTML = '';
+      const allOption = document.createElement('option');
+      allOption.value = 'ALL';
+      allOption.textContent = lang.allGames;
+      gameSlotSelect.appendChild(allOption);
+      slots.forEach(slot => {
+        const option = document.createElement('option');
+        option.value = slot;
+        option.dataset.gameName = games.get(slot);
+        option.textContent = lang.gameOption.replace('{name}', games.get(slot)).replace('{slot}', slot);
+        gameSlotSelect.appendChild(option);
+      });
+      gameSlotSelect.value = slots.includes(current) ? current : 'ALL';
+    }
+    updateGameMetrics(rows, selectedSlot);
+    renderGameCharts(rows, selectedSlot);
+    gameStatus.textContent = translations[currentLang].gameLoaded.replace('{start}', startDate).replace('{end}', endDate);
+  } catch (error) {
+    gameStatus.textContent = translations[currentLang].gameLoadError.replace('{message}', error.message);
+  }
+}
+
+btnLoadMonthly.addEventListener('click', loadMonthlyData);
+monthlyMonthSelect.addEventListener('change', loadMonthlyData);
+btnLoadGame.addEventListener('click', loadGameData);
+gameSlotSelect.addEventListener('change', loadGameData);
 
 // 網頁加載完成後自動運行初始化
 window.addEventListener('DOMContentLoaded', () => {

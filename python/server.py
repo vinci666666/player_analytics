@@ -33,7 +33,7 @@ def load_db_config():
         except Exception as e:
             print(f"警告：無法建立設定檔 config.json: {e}", file=sys.stderr)
         return default_config
-        
+
     # 讀取現有的配置並補齊可能遺失的鍵值
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
@@ -45,6 +45,12 @@ def load_db_config():
     except Exception as e:
         print(f"讀取 config.json 發生錯誤：{e}。將使用預設設定值。", file=sys.stderr)
         return default_config
+
+def get_game_names():
+    """Return the slot_id-to-name mapping configured in config.json."""
+    config = load_db_config()
+    game_names = config.get("game_name", {})
+    return {str(slot_id): str(name) for slot_id, name in game_names.items()}
 
 db_pool = None
 dates_cache = {
@@ -183,6 +189,127 @@ def get_dates():
         return jsonify(dates)
     except Exception as e:
         print(f"獲取日期清單失敗: {e}", file=sys.stderr)
+        return db_error_response(e)
+    finally:
+        if conn:
+            release_db_connection(conn)
+
+@app.route('/api/monthly', methods=['GET'])
+def get_monthly_data():
+    """Return daily casino metrics used by the monthly dashboard charts."""
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+
+    if not start_date or not end_date:
+        return jsonify({"error": "start_date and end_date are required"}), 400
+
+    try:
+        start_day = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end_day = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"error": "Dates must use YYYY-MM-DD format"}), 400
+
+    if start_day > end_day:
+        return jsonify({"error": "start_date must not be later than end_date"}), 400
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        apply_query_timeout(cursor)
+        cursor.execute("""
+            SELECT
+                date,
+                player_count,
+                dnu,
+                retention_1,
+                retention_3,
+                retention_7,
+                total_spin_count,
+                total_bet_amount,
+                total_win_amount,
+                rtp,
+                odd_rtp,
+                bet_1_player_count,
+                bet_1_player_avg_bet_count,
+                bet_1_rtp,
+                bet_2_player_count,
+                bet_2_player_avg_bet_count,
+                bet_2_rtp,
+                bet_3_player_count,
+                bet_3_player_avg_bet_count,
+                bet_3_rtp
+            FROM public.casino_retention
+            WHERE date >= %s AND date <= %s
+            ORDER BY date;
+        """, (start_day, end_day))
+        rows = cursor.fetchall()
+        return jsonify([
+            {**row, "date": row["date"].isoformat() if row.get("date") else None}
+            for row in rows
+        ])
+    except Exception as e:
+        print(f"Failed to load monthly metrics ({start_date} ~ {end_date}): {e}", file=sys.stderr)
+        return db_error_response(e)
+    finally:
+        if conn:
+            release_db_connection(conn)
+
+@app.route('/api/game', methods=['GET'])
+def get_game_data():
+    """Return daily game metrics grouped by date and slot_id."""
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    slot_id = request.args.get('slot_id')
+
+    if not start_date or not end_date:
+        return jsonify({"error": "start_date and end_date are required"}), 400
+
+    try:
+        start_day = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end_day = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"error": "Dates must use YYYY-MM-DD format"}), 400
+
+    if start_day > end_day:
+        return jsonify({"error": "start_date must not be later than end_date"}), 400
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        apply_query_timeout(cursor)
+        query = """
+            SELECT
+                date, slot_id, player_count, dnu, retention_1, retention_3, retention_7,
+                total_spin_count, total_bet_amount, total_win_amount,
+                bet_1_player_count, bet_1_spin_count, bet_1_total_bet_amount, bet_1_total_win_amount,
+                bet_2_player_count, bet_2_spin_count, bet_2_total_bet_amount, bet_2_total_win_amount,
+                bet_3_player_count, bet_3_spin_count, bet_3_total_bet_amount, bet_3_total_win_amount
+            FROM public.game_retention
+            WHERE date >= %s AND date <= %s
+        """
+        params = [start_day, end_day]
+        if slot_id and slot_id.upper() != 'ALL':
+            try:
+                params.append(int(slot_id))
+            except ValueError:
+                return jsonify({"error": "slot_id must be numeric"}), 400
+            query += " AND slot_id = %s"
+        query += " ORDER BY date, slot_id"
+        cursor.execute(query, tuple(params))
+        rows = cursor.fetchall()
+        game_names = get_game_names()
+        return jsonify([
+            {
+                **row,
+                "date": row["date"].isoformat() if row.get("date") else None,
+                "game_name": game_names.get(str(row["slot_id"]), str(row["slot_id"]))
+            }
+            for row in rows
+        ])
+    except Exception as e:
+        print(f"Failed to load game metrics ({start_date} ~ {end_date}, slot={slot_id}): {e}", file=sys.stderr)
         return db_error_response(e)
     finally:
         if conn:
@@ -437,9 +564,11 @@ def get_data():
             
         cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
+        game_names = get_game_names()
         
         # 將 datetime 物件轉換為格式化字串以利 JSON 序列化
         for row in rows:
+            row['game_name'] = game_names.get(str(row['slot_id']), str(row['slot_id']))
             if row['bet_at']:
                 row['bet_at'] = row['bet_at'].strftime('%Y-%m-%d %H:%M:%S')
             if row.get('stats_first_spin_date'):

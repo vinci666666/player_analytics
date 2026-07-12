@@ -23,6 +23,19 @@
   </header>
 
   <main>
+    <aside class="page-navigation" aria-label="Page navigation">
+      <div class="page-navigation-header">
+        <span id="page-nav-eyebrow" class="page-navigation-eyebrow">ANALYTICS</span>
+        <h2 id="page-nav-title">分析中心</h2>
+      </div>
+      <nav class="page-nav-list">
+        <a class="page-nav-item" href="#" data-page="home"><span class="page-nav-icon" aria-hidden="true">⌂</span><span id="page-nav-home">主頁</span></a>
+        <a class="page-nav-item" href="#" data-page="monthly"><span class="page-nav-icon" aria-hidden="true">▣</span><span id="page-nav-monthly">月分析</span></a>
+        <a class="page-nav-item" href="#" data-page="game"><span class="page-nav-icon" aria-hidden="true">◆</span><span id="page-nav-game">遊戲分析</span></a>
+        <a class="page-nav-item active" href="#player-analysis" data-page="player" aria-current="page"><span class="page-nav-icon" aria-hidden="true">♙</span><span id="page-nav-player">玩家分析</span></a>
+      </nav>
+    </aside>
+
     <!-- Left Column: Controls and Config -->
     <div class="control-sidebar">
       <div class="panel">
@@ -116,6 +129,79 @@
       </div>
       
 
+    </div>
+
+    <!-- Monthly Analysis -->
+    <div id="monthly-analysis-content" class="monthly-analysis-content" hidden>
+      <div class="monthly-toolbar panel">
+        <div>
+          <span id="monthly-eyebrow" class="page-navigation-eyebrow">MONTHLY ANALYSIS</span>
+          <h2 id="monthly-page-title" class="monthly-page-title">月分析</h2>
+          <p id="monthly-page-description" class="monthly-page-description">每日營運指標與月度趨勢</p>
+        </div>
+        <div class="monthly-date-controls">
+          <label id="monthly-label-month" for="monthly-month-select">分析月份</label>
+          <input id="monthly-month-select" class="form-control" type="month">
+          <button id="btn-load-monthly" class="btn-primary monthly-load-button" type="button">載入月分析</button>
+        </div>
+      </div>
+
+      <div class="monthly-metrics-grid">
+        <div class="metric-card"><span id="monthly-label-avg-players" class="metric-label">平均玩家數</span><span id="monthly-avg-players" class="metric-value">--</span></div>
+        <div class="metric-card"><span id="monthly-label-avg-dnu" class="metric-label">平均 DNU</span><span id="monthly-avg-dnu" class="metric-value">--</span></div>
+        <div class="metric-card"><span id="monthly-label-avg-rtp" class="metric-label">平均 RTP</span><span id="monthly-avg-rtp" class="metric-value">--</span></div>
+        <div class="metric-card"><span id="monthly-label-total-bet" class="metric-label">總投注額</span><span id="monthly-total-bet" class="metric-value">--</span></div>
+        <div class="metric-card"><span id="monthly-label-total-win" class="metric-label">總派彩</span><span id="monthly-total-win" class="metric-value">--</span></div>
+        <div class="metric-card"><span id="monthly-label-days" class="metric-label">資料天數</span><span id="monthly-days" class="metric-value">--</span></div>
+      </div>
+
+      <div class="monthly-charts-grid">
+        <div class="panel monthly-chart-panel"><div id="monthly-rtp-chart" class="monthly-chart"></div></div>
+        <div class="panel monthly-chart-panel"><div id="monthly-ggr-chart" class="monthly-chart"></div></div>
+        <div class="panel monthly-chart-panel"><div id="monthly-player-chart" class="monthly-chart"></div></div>
+        <div class="panel monthly-chart-panel"><div id="monthly-dnu-chart" class="monthly-chart"></div></div>
+        <div class="panel monthly-chart-panel"><div id="monthly-retention-chart" class="monthly-chart"></div></div>
+        <div class="panel monthly-chart-panel"><div id="monthly-bet-type-chart" class="monthly-chart"></div></div>
+      </div>
+      <p id="monthly-status" class="monthly-status" role="status"></p>
+    </div>
+
+    <!-- Game Analysis -->
+    <div id="game-analysis-content" class="game-analysis-content" hidden>
+      <div class="game-toolbar panel">
+        <div>
+          <span id="game-eyebrow" class="page-navigation-eyebrow">GAME ANALYSIS</span>
+          <h2 id="game-page-title" class="monthly-page-title">遊戲分析</h2>
+          <p id="game-page-description" class="monthly-page-description">依遊戲 ID 查看每日營運與玩家表現</p>
+        </div>
+        <div class="monthly-date-controls">
+          <label id="game-label-slot" for="game-slot-select">遊戲</label>
+          <select id="game-slot-select" class="form-control game-slot-select"><option value="ALL">全部遊戲</option></select>
+          <label id="game-label-start-date" for="game-start-date">開始日期</label>
+          <input id="game-start-date" class="form-control" type="date">
+          <label id="game-label-end-date" for="game-end-date">結束日期</label>
+          <input id="game-end-date" class="form-control" type="date">
+          <button id="btn-load-game" class="btn-primary monthly-load-button" type="button">載入遊戲分析</button>
+        </div>
+      </div>
+
+      <div class="monthly-metrics-grid">
+        <div class="metric-card"><span id="game-label-avg-players" class="metric-label">平均玩家數</span><span id="game-avg-players" class="metric-value">--</span></div>
+        <div class="metric-card"><span id="game-label-avg-dnu" class="metric-label">平均 DNU</span><span id="game-avg-dnu" class="metric-value">--</span></div>
+        <div class="metric-card"><span id="game-label-avg-rtp" class="metric-label">平均 RTP</span><span id="game-avg-rtp" class="metric-value">--</span></div>
+        <div class="metric-card"><span id="game-label-total-bet" class="metric-label">總投注額</span><span id="game-total-bet" class="metric-value">--</span></div>
+        <div class="metric-card"><span id="game-label-total-win" class="metric-label">總派彩</span><span id="game-total-win" class="metric-value">--</span></div>
+        <div class="metric-card"><span id="game-label-days" class="metric-label">資料天數</span><span id="game-days" class="metric-value">--</span></div>
+      </div>
+
+      <div class="monthly-charts-grid">
+        <div class="panel monthly-chart-panel"><div id="game-player-chart" class="monthly-chart"></div></div>
+        <div class="panel monthly-chart-panel"><div id="game-ggr-chart" class="monthly-chart"></div></div>
+        <div class="panel monthly-chart-panel"><div id="game-rtp-chart" class="monthly-chart"></div></div>
+        <div class="panel monthly-chart-panel"><div id="game-retention-chart" class="monthly-chart"></div></div>
+        <div class="panel monthly-chart-panel"><div id="game-bet-type-chart" class="monthly-chart"></div></div>
+      </div>
+      <p id="game-status" class="monthly-status" role="status"></p>
     </div>
 
     <!-- Right Column: Visual Dashboard -->

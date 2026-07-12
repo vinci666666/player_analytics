@@ -1,7 +1,26 @@
 {
-    "host": "localhost",
-    "port": 5432,
-    "database": "analysis",
-    "user": "postgres",
-    "password": "19880807"
+  "host": "localhost",
+  "port": 5432,
+  "database": "analytics",
+  "user": "postgres",
+  "password": "19880807",
+
+  "game_name": {
+    "1": "Poseidon",
+    "2": "Fruit Crush",
+    "3": "Disco Diva",
+    "4": "Golden Pot",
+    "5": "Volcano",
+    "6": "Hanabi",
+    "7": "Space Adv",
+    "8": "Magic Bloom",
+    "9": "Maya Quest",
+    "10": "Alice's Wonder",
+    "11": "Apollo's Fortune",
+    "12": "Aphrodite Desire",
+    "13": "Pirate Cats",
+    "14": "Viking Fortune",
+    "15": "Poseidon's fortune 2",
+    "16": "Golden Wings"
+  }
 }

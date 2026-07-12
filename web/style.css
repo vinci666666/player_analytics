@@ -106,14 +106,65 @@ main {
   margin: 0 auto;
   padding: 2rem;
   display: grid;
-  grid-template-columns: 350px 1fr;
+  grid-template-columns: 210px 350px 1fr;
   gap: 2rem;
 }
+
+.page-navigation {
+  align-self: start;
+  position: sticky;
+  top: 6.5rem;
+  padding: 1.25rem 0.75rem;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+}
+
+.page-navigation-header {
+  padding: 0 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 0.75rem;
+}
+
+.page-navigation-eyebrow {
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.14em;
+}
+
+.page-navigation h2 { margin-top: 0.25rem; color: var(--text-primary); font-size: 1rem; }
+.page-nav-list { display: flex; flex-direction: column; gap: 0.35rem; }
+.page-nav-item { display: flex; align-items: center; gap: 0.7rem; padding: 0.8rem 0.75rem; border-radius: 9px; color: var(--text-secondary); text-decoration: none; font-size: 0.9rem; transition: all var(--transition-speed); }
+.page-nav-item:hover { color: var(--text-primary); background: rgba(99, 102, 241, 0.1); }
+.page-nav-item.active { color: #fff; background: linear-gradient(135deg, rgba(99, 102, 241, 0.95), rgba(79, 70, 229, 0.75)); box-shadow: 0 5px 15px var(--primary-glow); }
+.page-nav-icon { width: 1.2rem; text-align: center; font-size: 1.1rem; }
 
 @media (max-width: 1024px) {
   main {
     grid-template-columns: 1fr;
   }
+
+  .page-navigation { position: static; }
+  .page-nav-list { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .page-nav-item { justify-content: center; }
+  .monthly-analysis-content { grid-column: 1; }
+  main.monthly-page { grid-template-columns: 1fr; }
+  .game-analysis-content { grid-column: 1; }
+  main.game-page { grid-template-columns: 1fr; }
+  .monthly-metrics-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 600px) {
+  .page-nav-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .monthly-toolbar { align-items: stretch; flex-direction: column; }
+  .game-toolbar { align-items: stretch; flex-direction: column; }
+  .monthly-date-controls { align-items: center; }
+  .monthly-date-controls label { margin-bottom: 0; }
+  .monthly-date-controls .form-control { flex: 1; min-width: 120px; }
+  .monthly-charts-grid { grid-template-columns: 1fr; }
+  .monthly-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* Glassmorphic Panels */
@@ -254,6 +305,29 @@ main {
   flex-direction: column;
   gap: 2rem;
 }
+
+.monthly-analysis-content { grid-column: 2 / -1; display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
+.monthly-analysis-content[hidden] { display: none; }
+.game-analysis-content { grid-column: 2 / -1; display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
+.game-analysis-content[hidden] { display: none; }
+.monthly-toolbar { display: flex; justify-content: space-between; align-items: end; gap: 1.5rem; }
+.game-toolbar { display: flex; justify-content: space-between; align-items: end; gap: 1.5rem; }
+.monthly-page-title { margin-top: 0.25rem; font-size: 1.35rem; }
+.monthly-page-description { color: var(--text-secondary); font-size: 0.85rem; margin-top: 0.15rem; }
+.monthly-date-controls { display: flex; align-items: end; gap: 0.6rem; flex-wrap: wrap; }
+.monthly-date-controls label { color: var(--text-secondary); font-size: 0.75rem; margin-bottom: 0.65rem; }
+.monthly-date-controls .form-control { width: 145px; padding: 0.55rem; }
+.game-slot-select { width: 150px !important; }
+.monthly-load-button { width: auto; padding: 0.65rem 1rem; }
+.monthly-metrics-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0.75rem; }
+.monthly-charts-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.monthly-chart-panel { padding: 0.75rem; }
+.monthly-chart { height: 330px; }
+.monthly-status { min-height: 1.25rem; color: var(--text-secondary); font-size: 0.85rem; }
+main.monthly-page .control-sidebar, main.monthly-page .analytics-content { display: none; }
+main.monthly-page { grid-template-columns: 210px 1fr; }
+main.game-page .control-sidebar, main.game-page .analytics-content { display: none; }
+main.game-page { grid-template-columns: 210px 1fr; }
 
 /* Metric Cards Grid */
 .metrics-section {
