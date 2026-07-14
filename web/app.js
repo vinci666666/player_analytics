@@ -35,6 +35,8 @@ let gameRankingCache = [];
 let gameRankingSort = { key: 'total_spin_count', direction: 'desc' };
 let gameRankingRequestId = 0;
 let homeDashboardCache = null;
+let agentOptionRows = [];
+let agentInitialized = false;
 const UI_STATE_KEY = 'playerAnalytics.uiState.v1';
 let restoredUiState = null;
 let pendingGameSlot = '';
@@ -68,6 +70,13 @@ function saveUiState() {
         startDate: gameStartDate.value,
         endDate: gameEndDate.value,
         slot: gameSlotSelect.value || pendingGameSlot || 'ALL'
+      },
+      agent: {
+        parentAgentId: agentParentSelect.value,
+        agentId: agentSelect.value,
+        betType: agentBetTypeSelect.value,
+        startDate: agentStartDate.value,
+        endDate: agentEndDate.value
       },
       player: {
         dateMode: dateModeSelect.value,
@@ -127,6 +136,14 @@ const btnLoadGame = document.getElementById('btn-load-game');
 const gameStatus = document.getElementById('game-status');
 const gameSpinDistributionPanel = document.getElementById('game-spin-distribution-panel');
 const gameRankingPanel = document.getElementById('game-ranking-panel');
+const agentContent = document.getElementById('agent-analysis-content');
+const agentParentSelect = document.getElementById('agent-parent-select');
+const agentSelect = document.getElementById('agent-select');
+const agentBetTypeSelect = document.getElementById('agent-bet-type-select');
+const agentStartDate = document.getElementById('agent-start-date');
+const agentEndDate = document.getElementById('agent-end-date');
+const btnLoadAgent = document.getElementById('btn-load-agent');
+const agentStatus = document.getElementById('agent-status');
 const navigationToast = document.getElementById('navigation-toast');
 const loginForm = document.getElementById('login-form');
 const loginPassword = document.getElementById('login-password');
@@ -139,7 +156,7 @@ let dashboardInitialized = false;
 pageNavItems.forEach((item) => {
   item.addEventListener('click', (event) => {
     const page = item.dataset.page;
-    if (page === 'home' || page === 'monthly' || page === 'game') {
+    if (page === 'home' || page === 'monthly' || page === 'game' || page === 'agent') {
       event.preventDefault();
       setActivePage(page);
     } else if (page === 'player') {
@@ -259,9 +276,11 @@ const translations = {
     navEyebrow: "ANALYTICS",
     monthlyEyebrow: "MONTHLY OPERATIONS",
     gameEyebrow: "GAME PERFORMANCE",
+    agentEyebrow: "AGENT ANALYSIS",
     navHome: "Operations Overview",
     navMonthly: "Monthly Operations",
     navGame: "Game Performance",
+    navAgent: "Agent Analysis",
     navPlayer: "Player Behavior",
     homeEyebrow: "OPERATIONS OVERVIEW",
     homeTitle: "Operations Overview",
@@ -271,6 +290,7 @@ const translations = {
     homeMonthRangeComparison: "{currentStart}–{currentEnd} vs. {previousStart}–{previousEnd}",
     homeDayTitle: "Current-Day Performance",
     homeGameRankingTitle: "Game Performance Rankings",
+    homeAgentPerformanceTitle: "Agent Performance",
     homePlayerAlertTitle: "High-Profit Player Alerts",
     homeSevenDayTop10: "Last 7 Days · Top 10",
     homeCurrentDayTop5: "Current Day · Top 5",
@@ -283,6 +303,8 @@ const translations = {
     monthlyDescription: "Operating KPIs, retention, and game performance trends",
     gameTitle: "Game Performance Analysis",
     gameDescription: "Daily engagement, monetization, and retention by game",
+    agentTitle: "Agent Analysis",
+    agentDescription: "Game performance by agent hierarchy, wager type, and date range",
     labelAnalysisMonth: "Analysis Month",
     labelPeriodEndMonth: "End Month",
     labelMonthlyMode: "Analysis Mode",
@@ -317,6 +339,10 @@ const translations = {
     gameLoaded: "Loaded game data from {start} to {end}.",
     gameDateError: "Unable to load available dates. Please select dates manually.",
     gameLoadError: "Failed to load game analysis: {message}",
+    agentLoading: "Loading agent analysis…",
+    agentLoaded: "Agent analysis loaded.",
+    agentNoData: "No agent data for the selected filters.",
+    agentLoadError: "Failed to load agent analysis: {message}",
     gameOption: "{name} (ID {slot})",
     chartDailyRtp: "Daily RTP Trend",
     chartDailyGgr: "Daily GGR Trend",
@@ -456,9 +482,11 @@ const translations = {
     navEyebrow: "數據分析",
     monthlyEyebrow: "月度營運",
     gameEyebrow: "遊戲績效",
+    agentEyebrow: "AGENT 分析",
     navHome: "營運總覽",
     navMonthly: "月度營運分析",
     navGame: "遊戲績效分析",
+    navAgent: "Agent 分析",
     navPlayer: "玩家行為分析",
     homeEyebrow: "營運總覽",
     homeTitle: "營運總覽",
@@ -468,6 +496,7 @@ const translations = {
     homeMonthRangeComparison: "{currentStart}–{currentEnd} 對比 {previousStart}–{previousEnd}",
     homeDayTitle: "當日累積績效",
     homeGameRankingTitle: "遊戲績效排名",
+    homeAgentPerformanceTitle: "Agent 營運績效",
     homePlayerAlertTitle: "高獲利玩家警示",
     homeSevenDayTop10: "近 7 日 · Top 10",
     homeCurrentDayTop5: "當日 · Top 5",
@@ -480,6 +509,8 @@ const translations = {
     monthlyDescription: "營運指標、玩家留存與遊戲績效趨勢",
     gameTitle: "遊戲績效分析",
     gameDescription: "依遊戲檢視每日參與度、營收與留存表現",
+    agentTitle: "Agent 分析",
+    agentDescription: "依代理層級、投注方式與日期檢視遊戲績效",
     labelAnalysisMonth: "分析月份",
     labelPeriodEndMonth: "結束月份",
     labelMonthlyMode: "分析模式",
@@ -514,6 +545,10 @@ const translations = {
     gameLoaded: "已載入 {start} 至 {end} 的遊戲資料。",
     gameDateError: "無法取得可用日期，請手動選擇日期。",
     gameLoadError: "遊戲績效分析載入失敗：{message}",
+    agentLoading: "正在載入 Agent 分析…",
+    agentLoaded: "Agent 分析已載入。",
+    agentNoData: "所選條件沒有 Agent 資料。",
+    agentLoadError: "Agent 分析載入失敗：{message}",
     gameOption: "{name}（ID {slot}）",
     chartDailyRtp: "每日 RTP 趨勢",
     chartDailyGgr: "每日營收 (GGR) 趨勢",
@@ -591,6 +626,7 @@ function updateLanguageUI() {
   document.getElementById('page-nav-home').textContent = lang.navHome;
   document.getElementById('page-nav-monthly').textContent = lang.navMonthly;
   document.getElementById('page-nav-game').textContent = lang.navGame;
+  document.getElementById('page-nav-agent').textContent = lang.navAgent;
   document.getElementById('page-nav-player').textContent = lang.navPlayer;
 
   document.getElementById('home-eyebrow').textContent = lang.homeEyebrow;
@@ -599,6 +635,7 @@ function updateLanguageUI() {
   document.getElementById('home-month-title').textContent = lang.homeMonthTitle;
   document.getElementById('home-day-title').textContent = lang.homeDayTitle;
   document.getElementById('home-game-ranking-title').textContent = lang.homeGameRankingTitle;
+  document.getElementById('home-agent-performance-title').textContent = lang.homeAgentPerformanceTitle;
   document.getElementById('home-player-alert-title').textContent = lang.homePlayerAlertTitle;
   ['home-game-7d-title', 'home-player-7d-title'].forEach(id => document.getElementById(id).textContent = lang.homeSevenDayTop10);
   ['home-game-day-title', 'home-player-day-title'].forEach(id => document.getElementById(id).textContent = lang.homeCurrentDayTop5);
@@ -659,6 +696,9 @@ function updateLanguageUI() {
   document.getElementById('game-page-title').textContent = lang.gameTitle;
   document.getElementById('game-eyebrow').textContent = lang.gameEyebrow;
   document.getElementById('game-page-description').textContent = lang.gameDescription;
+  document.getElementById('agent-page-title').textContent = lang.agentTitle;
+  document.getElementById('agent-eyebrow').textContent = lang.agentEyebrow;
+  document.getElementById('agent-page-description').textContent = lang.agentDescription;
   document.getElementById('game-label-slot').textContent = lang.labelGame;
   document.getElementById('game-label-start-date').textContent = lang.labelStartDate;
   document.getElementById('game-label-end-date').textContent = lang.labelEndDate;
@@ -1660,6 +1700,28 @@ function renderHomeDashboard(data) {
   };
   renderGameRows('home-game-7d-body', data.game_rankings?.seven_day || []);
   renderGameRows('home-game-day-body', data.game_rankings?.current_day || []);
+  const renderAgentPeriod = (chartId, bodyId, rows, title) => {
+    const labels = rows.map(row => `P${row.parent_agent_id} / A${row.agent_id}`);
+    Plotly.newPlot(chartId, [{
+      labels,
+      values: rows.map(row => Math.max(0, Number(row.total_bet_amount || 0))),
+      type: 'pie',
+      hole: 0.48,
+      textinfo: 'label+percent',
+      hovertemplate: '%{label}<br>Total Bet: %{value:,.0f} IDR<br>%{percent}<extra></extra>'
+    }], {
+      ...monthlyChartLayout(title, ''),
+      margin: { l: 20, r: 20, t: 48, b: 20 },
+      showlegend: false
+    }, { responsive: true, displaylogo: false, displayModeBar: false });
+    document.getElementById(bodyId).innerHTML = rows.length ? rows.map(row => `<tr>
+      <td>${escapeHtml(row.parent_agent_id)}</td><td>${escapeHtml(row.agent_id)}</td><td>${formatCount(row.player_count)}</td>
+      <td>${formatCount(row.total_bet_amount)}</td><td>${formatCount(row.total_win_amount)}</td>
+      <td class="${Number(row.ggr || 0) >= 0 ? 'profit-positive' : 'profit-negative'}">${formatCount(row.ggr)}</td>
+    </tr>`).join('') : '<tr><td colspan="6">--</td></tr>';
+  };
+  renderAgentPeriod('home-agent-7d-chart', 'home-agent-7d-body', data.agent_performance?.seven_day || [], currentLang === 'zh' ? '近 7 日 Agent 總押占比' : '7-Day Agent Wager Share');
+  renderAgentPeriod('home-agent-day-chart', 'home-agent-day-body', data.agent_performance?.current_day || [], currentLang === 'zh' ? '當日 Agent 總押占比' : 'Current-Day Agent Wager Share');
   renderPlayerRows('home-player-7d-body', data.player_alerts?.seven_day || []);
   renderPlayerRows('home-player-day-body', data.player_alerts?.current_day || []);
   homeStatus.textContent = '';
@@ -1675,6 +1737,96 @@ async function loadHomeDashboard() {
     renderHomeDashboard(data);
   } catch (error) {
     homeStatus.textContent = translations[currentLang].homeLoadError.replace('{message}', error.message);
+  }
+}
+
+function populateAgentSelect() {
+  const parentValue = agentParentSelect.value;
+  const currentValue = agentSelect.value;
+  const rows = parentValue === 'ALL'
+    ? agentOptionRows
+    : agentOptionRows.filter(row => String(row.parent_agent_id) === parentValue);
+  const agentIds = [...new Set(rows.map(row => String(row.agent_id)))];
+  agentSelect.innerHTML = '<option value="ALL">ALL</option>';
+  agentIds.forEach(agentId => {
+    const option = document.createElement('option');
+    option.value = agentId;
+    option.textContent = agentId;
+    agentSelect.appendChild(option);
+  });
+  agentSelect.value = agentIds.includes(currentValue) ? currentValue : 'ALL';
+}
+
+async function initializeAgentPage() {
+  if (agentInitialized) return;
+  agentInitialized = true;
+  try {
+    const [datesResponse, optionsResponse] = await Promise.all([fetch('/api/dates'), fetch('/api/agent-options')]);
+    const dates = await datesResponse.json();
+    const options = await optionsResponse.json();
+    if (!datesResponse.ok) throw new Error(dates.error || 'Unable to load dates');
+    if (!optionsResponse.ok) throw new Error(options.error || 'Unable to load agents');
+    agentOptionRows = options.agents || [];
+    agentParentSelect.innerHTML = '<option value="ALL">ALL</option>';
+    (options.parent_agents || []).forEach(parentId => {
+      const option = document.createElement('option');
+      option.value = String(parentId);
+      option.textContent = String(parentId);
+      agentParentSelect.appendChild(option);
+    });
+    const savedAgent = restoredUiState?.agent || {};
+    if (Array.from(agentParentSelect.options).some(option => option.value === String(savedAgent.parentAgentId))) {
+      agentParentSelect.value = String(savedAgent.parentAgentId);
+    }
+    populateAgentSelect();
+    if (Array.from(agentSelect.options).some(option => option.value === String(savedAgent.agentId))) {
+      agentSelect.value = String(savedAgent.agentId);
+    }
+    if (!agentEndDate.value && dates.length) {
+      agentEndDate.value = dates[0];
+      agentStartDate.value = dates[Math.min(6, dates.length - 1)];
+    }
+    await loadAgentAnalysis();
+  } catch (error) {
+    agentInitialized = false;
+    agentStatus.textContent = translations[currentLang].agentLoadError.replace('{message}', error.message);
+  }
+}
+
+function renderAgentAnalysis(data) {
+  const cube = data.cube || [];
+  const details = data.details || [];
+  document.getElementById('agent-cube-body').innerHTML = cube.length ? cube.map(row => `<tr>
+    <td>${escapeHtml(row.game_name)}</td><td>${formatCount(row.player_count)}</td><td>${formatCount(row.dnu)}</td>
+    <td>${formatCount(row.spin_count)}</td><td>${formatCount(row.total_bet_amount)}</td><td>${formatCount(row.total_win_amount)}</td><td>${formatCount(row.ggr)}</td>
+  </tr>`).join('') : '<tr><td colspan="7">--</td></tr>';
+  document.getElementById('agent-details-body').innerHTML = details.length ? details.map(row => `<tr>
+    <td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.game_name)}</td><td>${escapeHtml(row.bet_type)}</td><td>${formatCount(row.player_count)}</td>
+    <td>${formatCount(row.total_bet_amount)}</td><td>${formatCount(row.total_win_amount)}</td><td>${formatCount(row.ggr)}</td>
+  </tr>`).join('') : '<tr><td colspan="7">--</td></tr>';
+  agentStatus.textContent = cube.length || details.length
+    ? translations[currentLang].agentLoaded
+    : translations[currentLang].agentNoData;
+}
+
+async function loadAgentAnalysis() {
+  if (!agentStartDate.value || !agentEndDate.value) return;
+  agentStatus.textContent = translations[currentLang].agentLoading;
+  const params = new URLSearchParams({
+    parent_agent_id: agentParentSelect.value,
+    agent_id: agentSelect.value,
+    bet_type: agentBetTypeSelect.value,
+    start_date: agentStartDate.value,
+    end_date: agentEndDate.value
+  });
+  try {
+    const response = await fetch(`/api/agent-analysis?${params}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Agent analysis API request failed');
+    renderAgentAnalysis(data);
+    saveUiState();
+  } catch (error) {
+    agentStatus.textContent = translations[currentLang].agentLoadError.replace('{message}', error.message);
   }
 }
 
@@ -1703,14 +1855,17 @@ function setActivePage(page) {
   const isHome = page === 'home';
   const isMonthly = page === 'monthly';
   const isGame = page === 'game';
+  const isAgent = page === 'agent';
   const isPlayer = page === 'player';
   document.querySelector('main').classList.toggle('home-page', isHome);
   document.querySelector('main').classList.toggle('monthly-page', isMonthly);
   document.querySelector('main').classList.toggle('game-page', isGame);
+  document.querySelector('main').classList.toggle('agent-page', isAgent);
   document.querySelector('main').classList.toggle('player-page', isPlayer);
   homeContent.hidden = !isHome;
   monthlyContent.hidden = !isMonthly;
   gameContent.hidden = !isGame;
+  agentContent.hidden = !isAgent;
 
   pageNavItems.forEach((item) => {
     const active = item.dataset.page === page;
@@ -1726,6 +1881,7 @@ function setActivePage(page) {
     loadGameDateDefaults();
   }
   if (isHome) loadHomeDashboard();
+  if (isAgent) initializeAgentPage();
   saveUiState();
 }
 
@@ -2189,6 +2345,11 @@ monthlyModeSelect.addEventListener('change', () => {
 monthlyStartMonth.addEventListener('change', loadMonthlyData);
 monthlyEndMonth.addEventListener('change', loadMonthlyData);
 btnLoadGame.addEventListener('click', loadGameData);
+btnLoadAgent.addEventListener('click', loadAgentAnalysis);
+agentParentSelect.addEventListener('change', () => {
+  populateAgentSelect();
+  saveUiState();
+});
 gameSlotSelect.addEventListener('change', loadGameData);
 gameStartDate.addEventListener('change', clearExpandedGameCube);
 gameEndDate.addEventListener('change', clearExpandedGameCube);
@@ -2212,6 +2373,7 @@ document.querySelectorAll('[data-game-ranking-key]').forEach(button => {
 });
 
 [monthlyModeSelect, monthlyMonthSelect, monthlyStartMonth, monthlyEndMonth, gameStartDate, gameEndDate, gameSlotSelect,
+  agentParentSelect, agentSelect, agentBetTypeSelect, agentStartDate, agentEndDate,
   dateModeSelect, dateSelect, dateStartSelect, dateEndSelect, minSpinsInput, maxSpinsInput,
   playerSelect, checkboxNewPlayer, checkboxOldPlayer, checkboxWinPlayer, checkboxLosePlayer,
   btnLangToggle].forEach(element => element.addEventListener('change', saveUiState));
@@ -2233,6 +2395,11 @@ function restoreUiState() {
   if (game.endDate) gameEndDate.value = game.endDate;
   pendingGameSlot = game.slot && game.slot !== 'ALL' ? String(game.slot) : '';
 
+  const agent = restoredUiState.agent || {};
+  if (['ALL', '1', '2', '3'].includes(String(agent.betType))) agentBetTypeSelect.value = String(agent.betType);
+  if (agent.startDate) agentStartDate.value = agent.startDate;
+  if (agent.endDate) agentEndDate.value = agent.endDate;
+
   const player = restoredUiState.player || {};
   if (player.dateMode === 'single' || player.dateMode === 'range') dateModeSelect.value = player.dateMode;
   containerSingleDate.style.display = dateModeSelect.value === 'single' ? 'block' : 'none';
@@ -2245,7 +2412,7 @@ function restoreUiState() {
     if (typeof player[key] === 'boolean') element.checked = player[key];
   });
 
-  return ['home', 'player', 'monthly', 'game'].includes(restoredUiState.activePage) ? restoredUiState.activePage : 'player';
+  return ['home', 'player', 'monthly', 'game', 'agent'].includes(restoredUiState.activePage) ? restoredUiState.activePage : 'player';
 }
 
 function renderMonthlyGameRanking() {

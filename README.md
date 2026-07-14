@@ -58,6 +58,16 @@ API 使用 PostgreSQL 連線池及 30 秒查詢逾時；可重用的日期列表
 psql -d <database> -f sql/db_structure_optimization.sql
 ```
 
+Agent 分析上線前請先建立依代理層級彙總的 retention 資料表：
+
+```bash
+psql -d <database> -f sql/create_agent_retention.sql
+```
+
+`agent_daily_retention` 以 `(date, parent_agent_id, agent_id)` 為主鍵；
+`agent_daily_game_retention` 以 `(date, parent_agent_id, agent_id, slot_id)` 為主鍵。
+兩張表分別沿用 `casino_retention` 與 `game_retention` 的指標欄位，供營運總覽與 Agent 分析 API 使用。
+
 此腳本包含 `CREATE INDEX CONCURRENTLY`，不可包在 transaction 中。大量匯入後需刷新 `player_daily_summary` 並更新統計資訊。
 
 ## 架構說明

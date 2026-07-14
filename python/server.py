@@ -265,6 +265,145 @@ def get_game_ranking():
         if conn:
             release_db_connection(conn)
 
+@app.route('/api/agent-options', methods=['GET'])
+def get_agent_options():
+    """Return parent-agent and agent pairs used by the agent analysis filters."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        apply_query_timeout(cursor)
+        cursor.execute("""
+            SELECT DISTINCT parent_agent_id, agent_id
+            FROM public.agent_daily_retention
+            ORDER BY parent_agent_id, agent_id;
+        """)
+        rows = cursor.fetchall()
+        return jsonify({
+            "parent_agents": sorted({row["parent_agent_id"] for row in rows}),
+            "agents": rows
+        })
+    except Exception as e:
+        print(f"Failed to load agent options: {e}", file=sys.stderr)
+        return db_error_response(e)
+    finally:
+        if conn:
+            release_db_connection(conn)
+
+@app.route('/api/agent-analysis', methods=['GET'])
+def get_agent_analysis():
+    """Return game cube and daily details for the selected agent filters."""
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    parent_agent_id = request.args.get('parent_agent_id', 'ALL')
+    agent_id = request.args.get('agent_id', 'ALL')
+    bet_type = request.args.get('bet_type', 'ALL').upper()
+    if not start_date or not end_date:
+        return jsonify({"error": "start_date and end_date are required"}), 400
+    try:
+        start_day = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end_day = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"error": "Dates must use YYYY-MM-DD format"}), 400
+    if start_day > end_day:
+        return jsonify({"error": "start_date must not be later than end_date"}), 400
+    if (end_day - start_day).days > 366:
+        return jsonify({"error": "Agent analysis range must not exceed 366 days"}), 400
+    if bet_type not in {'ALL', '1', '2', '3'}:
+        return jsonify({"error": "bet_type must be ALL, 1, 2, or 3"}), 400
+
+    filters = ["date BETWEEN %s AND %s"]
+    params = [start_day, end_day]
+    for column, value in (("parent_agent_id", parent_agent_id), ("agent_id", agent_id)):
+        if value and value.upper() != 'ALL':
+            try:
+                params.append(int(value))
+            except ValueError:
+                return jsonify({"error": f"{column} must be numeric"}), 400
+            filters.append(f"{column} = %s")
+    where_clause = " AND ".join(filters)
+    if bet_type == 'ALL':
+        player_expr = "player_count"
+        spin_expr = "total_spin_count"
+        bet_expr = "total_bet_amount"
+        win_expr = "total_win_amount"
+        detail_bet_type = "bt.bet_type"
+        detail_player_expr = "bt.player_count"
+        detail_spin_expr = "bt.spin_count"
+        detail_bet_expr = "bt.bet_amount"
+        detail_win_expr = "bt.win_amount"
+        detail_join = """
+            CROSS JOIN LATERAL (VALUES
+                (1, bet_1_player_count, bet_1_spin_count, bet_1_total_bet_amount, bet_1_total_win_amount),
+                (2, bet_2_player_count, bet_2_spin_count, bet_2_total_bet_amount, bet_2_total_win_amount),
+                (3, bet_3_player_count, bet_3_spin_count, bet_3_total_bet_amount, bet_3_total_win_amount)
+            ) AS bt(bet_type, player_count, spin_count, bet_amount, win_amount)
+        """
+        detail_group = "date, slot_id, bt.bet_type"
+    else:
+        player_expr = f"bet_{bet_type}_player_count"
+        spin_expr = f"bet_{bet_type}_spin_count"
+        bet_expr = f"bet_{bet_type}_total_bet_amount"
+        win_expr = f"bet_{bet_type}_total_win_amount"
+        detail_bet_type = bet_type
+        detail_player_expr = player_expr
+        detail_spin_expr = spin_expr
+        detail_bet_expr = bet_expr
+        detail_win_expr = win_expr
+        detail_join = ""
+        detail_group = "date, slot_id"
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        apply_query_timeout(cursor)
+        cursor.execute(f"""
+            SELECT slot_id,
+                   SUM({player_expr}) AS player_count,
+                   SUM(dnu) AS dnu,
+                   SUM({spin_expr}) AS spin_count,
+                   SUM({bet_expr}) AS total_bet_amount,
+                   SUM({win_expr}) AS total_win_amount,
+                   SUM({bet_expr}) - SUM({win_expr}) AS ggr
+            FROM public.agent_daily_game_retention
+            WHERE {where_clause}
+            GROUP BY slot_id
+            ORDER BY ggr DESC, slot_id;
+        """, tuple(params))
+        cube = cursor.fetchall()
+        cursor.execute(f"""
+            SELECT date, slot_id, {detail_bet_type} AS bet_type,
+                   SUM({detail_player_expr}) AS player_count,
+                   SUM({detail_spin_expr}) AS spin_count,
+                   SUM({detail_bet_expr}) AS total_bet_amount,
+                   SUM({detail_win_expr}) AS total_win_amount,
+                   SUM({detail_bet_expr}) - SUM({detail_win_expr}) AS ggr
+            FROM public.agent_daily_game_retention
+            {detail_join}
+            WHERE {where_clause}
+            GROUP BY {detail_group}
+            ORDER BY date, slot_id, bet_type;
+        """, tuple(params))
+        details = cursor.fetchall()
+        game_names = get_game_names()
+        def serialize(row):
+            return {
+                **row,
+                "date": row["date"].isoformat() if row.get("date") else None,
+                "game_name": game_names.get(str(row["slot_id"]), str(row["slot_id"]))
+            }
+        return jsonify({
+            "cube": [serialize(row) for row in cube],
+            "details": [serialize(row) for row in details]
+        })
+    except Exception as e:
+        print(f"Failed to load agent analysis: {e}", file=sys.stderr)
+        return db_error_response(e)
+    finally:
+        if conn:
+            release_db_connection(conn)
+
 @app.route('/api/home-dashboard', methods=['GET'])
 def get_home_dashboard():
     """Return the latest operations overview used by the home dashboard."""
@@ -410,6 +549,23 @@ def get_home_dashboard():
 
         games_7d = load_game_rankings(seven_day_start, reference_date, 10)
         games_today = load_game_rankings(reference_date, reference_date, 5)
+
+        def load_agent_performance(start_day, end_day):
+            cursor.execute("""
+                SELECT parent_agent_id, agent_id,
+                       SUM(player_count) AS player_count,
+                       SUM(total_bet_amount) AS total_bet_amount,
+                       SUM(total_win_amount) AS total_win_amount,
+                       SUM(total_bet_amount) - SUM(total_win_amount) AS ggr
+                FROM public.agent_daily_retention
+                WHERE date BETWEEN %s AND %s
+                GROUP BY parent_agent_id, agent_id
+                ORDER BY ggr DESC, parent_agent_id, agent_id;
+            """, (start_day, end_day))
+            return cursor.fetchall()
+
+        agents_7d = load_agent_performance(seven_day_start, reference_date)
+        agents_today = load_agent_performance(reference_date, reference_date)
         players_7d = load_player_alerts(seven_day_start, reference_date, 10)
         players_today = load_player_alerts(reference_date, reference_date, 5)
 
@@ -440,6 +596,7 @@ def get_home_dashboard():
             "players_7d": players_7d,
             "players_today": players_today,
             "game_rankings": {"seven_day": games_7d, "current_day": games_today},
+            "agent_performance": {"seven_day": agents_7d, "current_day": agents_today},
             "player_alerts": {"seven_day": normalized_players_7d, "current_day": normalized_players_today}
         }
         home_dashboard_cache.set("overview", payload)

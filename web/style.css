@@ -150,12 +150,14 @@ main {
   }
 
   .page-navigation { position: static; }
-  .page-nav-list { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .page-nav-list { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .page-nav-item { justify-content: center; }
   .monthly-analysis-content { grid-column: 1; }
   main.monthly-page { grid-template-columns: 1fr; }
   .game-analysis-content { grid-column: 1; }
   main.game-page { grid-template-columns: 1fr; }
+  .agent-analysis-content { grid-column: 1; }
+  main.agent-page { grid-template-columns: 1fr; }
   .monthly-metrics-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
@@ -442,8 +444,14 @@ select.form-control {
 .home-table-panel h4 { margin-bottom: 0.65rem; font-size: 0.92rem; color: var(--text-primary); }
 .home-table-panel .monthly-ranking-table { font-size: 0.78rem; }
 .home-table-panel .monthly-ranking-table th, .home-table-panel .monthly-ranking-table td { padding: 0.55rem 0.5rem; }
+.home-agent-chart { min-height: 320px; }
 .game-analysis-content { grid-column: 2 / -1; display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
 .game-analysis-content[hidden] { display: none; }
+.agent-analysis-content { grid-column: 2 / -1; display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
+.agent-analysis-content[hidden] { display: none; }
+.agent-filter-controls { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 0.55rem 0.8rem; align-items: end; }
+.agent-filter-controls label { color: var(--text-secondary); font-size: 0.72rem; }
+.agent-filter-controls .btn-primary { grid-column: span 2; }
 .monthly-toolbar { display: flex; justify-content: space-between; align-items: end; gap: 1.5rem; }
 .game-toolbar { display: flex; justify-content: space-between; align-items: end; gap: 1.5rem; }
 .monthly-page-title { margin-top: 0.25rem; font-size: 1.35rem; }
@@ -505,6 +513,8 @@ main.monthly-page .control-sidebar, main.monthly-page .analytics-content { displ
 main.monthly-page { grid-template-columns: 210px 1fr; }
 main.game-page .control-sidebar, main.game-page .analytics-content { display: none; }
 main.game-page { grid-template-columns: 210px 1fr; }
+main.agent-page .control-sidebar, main.agent-page .analytics-content { display: none; }
+main.agent-page { grid-template-columns: 210px 1fr; }
 main.home-page .control-sidebar, main.home-page .analytics-content { display: none; }
 main.home-page { grid-template-columns: 210px 1fr; }
 
@@ -512,6 +522,7 @@ main.home-page { grid-template-columns: 210px 1fr; }
   .home-analysis-content { grid-column: 1; }
   main.home-page { grid-template-columns: 1fr; }
   .home-two-column { grid-template-columns: 1fr; }
+  .agent-filter-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 700px) {

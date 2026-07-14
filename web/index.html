@@ -48,6 +48,7 @@
         <a class="page-nav-item" href="#" data-page="home"><span class="page-nav-icon" aria-hidden="true">⌂</span><span id="page-nav-home">營運總覽</span></a>
         <a class="page-nav-item" href="#" data-page="monthly"><span class="page-nav-icon" aria-hidden="true">▣</span><span id="page-nav-monthly">月度營運分析</span></a>
         <a class="page-nav-item" href="#" data-page="game"><span class="page-nav-icon" aria-hidden="true">◆</span><span id="page-nav-game">遊戲績效分析</span></a>
+        <a class="page-nav-item" href="#" data-page="agent"><span class="page-nav-icon" aria-hidden="true">◎</span><span id="page-nav-agent">Agent 分析</span></a>
         <a class="page-nav-item active" href="#player-analysis" data-page="player" aria-current="page"><span class="page-nav-icon" aria-hidden="true">♙</span><span id="page-nav-player">玩家行為分析</span></a>
       </nav>
     </aside>
@@ -188,6 +189,16 @@
         <div class="home-two-column">
           <div class="panel home-table-panel"><h4 id="home-game-7d-title">近 7 日 Top 10</h4><div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th id="home-game-7d-name">遊戲名稱</th><th>Spin</th><th>GGR</th></tr></thead><tbody id="home-game-7d-body"></tbody></table></div></div>
           <div class="panel home-table-panel"><h4 id="home-game-day-title">當日 Top 5</h4><div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th id="home-game-day-name">遊戲名稱</th><th>Spin</th><th>GGR</th></tr></thead><tbody id="home-game-day-body"></tbody></table></div></div>
+        </div>
+      </section>
+
+      <section class="home-section">
+        <div class="home-section-heading"><h3 id="home-agent-performance-title">Agent 營運績效</h3><span>依 GGR 排序</span></div>
+        <div class="home-two-column">
+          <div class="panel home-chart-panel"><div id="home-agent-7d-chart" class="home-agent-chart"></div></div>
+          <div class="panel home-chart-panel"><div id="home-agent-day-chart" class="home-agent-chart"></div></div>
+          <div class="panel home-table-panel"><h4 id="home-agent-7d-title">近 7 日</h4><div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Parent Agent</th><th>Agent</th><th>人數</th><th>總押</th><th>總贏</th><th>GGR</th></tr></thead><tbody id="home-agent-7d-body"></tbody></table></div></div>
+          <div class="panel home-table-panel"><h4 id="home-agent-day-title">當日</h4><div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Parent Agent</th><th>Agent</th><th>人數</th><th>總押</th><th>總贏</th><th>GGR</th></tr></thead><tbody id="home-agent-day-body"></tbody></table></div></div>
         </div>
       </section>
 
@@ -340,6 +351,40 @@
         </div>
       </div>
       <p id="game-status" class="monthly-status" role="status"></p>
+    </div>
+
+    <!-- Agent Analysis -->
+    <div id="agent-analysis-content" class="agent-analysis-content" hidden>
+      <div class="game-toolbar panel">
+        <div>
+          <span id="agent-eyebrow" class="page-navigation-eyebrow">AGENT ANALYSIS</span>
+          <h2 id="agent-page-title" class="monthly-page-title">Agent 分析</h2>
+          <p id="agent-page-description" class="monthly-page-description">依代理層級、投注方式與日期檢視遊戲績效</p>
+        </div>
+        <div class="agent-filter-controls">
+          <label for="agent-parent-select">Parent Agent</label>
+          <select id="agent-parent-select" class="form-control"><option value="ALL">全部</option></select>
+          <label for="agent-select">Agent</label>
+          <select id="agent-select" class="form-control"><option value="ALL">全部</option></select>
+          <label for="agent-bet-type-select">Bet Type</label>
+          <select id="agent-bet-type-select" class="form-control"><option value="ALL">全部</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
+          <label for="agent-start-date">開始日期</label>
+          <input id="agent-start-date" class="form-control" type="date">
+          <label for="agent-end-date">結束日期</label>
+          <input id="agent-end-date" class="form-control" type="date">
+          <button id="btn-load-agent" class="btn-primary monthly-load-button" type="button">執行 Agent 分析</button>
+        </div>
+      </div>
+
+      <div class="panel monthly-ranking-panel">
+        <h3 class="monthly-ranking-title">Cube</h3>
+        <div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Game Name</th><th>Player Count</th><th>DNU</th><th>Spin Count</th><th>Total Bet</th><th>Total Win</th><th>GGR</th></tr></thead><tbody id="agent-cube-body"></tbody></table></div>
+      </div>
+      <div class="panel monthly-ranking-panel">
+        <h3 class="monthly-ranking-title">Details</h3>
+        <div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Date</th><th>Game Name</th><th>Bet Type</th><th>Player Count</th><th>Total Bet</th><th>Total Win</th><th>GGR</th></tr></thead><tbody id="agent-details-body"></tbody></table></div>
+      </div>
+      <p id="agent-status" class="monthly-status" role="status"></p>
     </div>
 
     <!-- Right Column: Visual Dashboard -->
