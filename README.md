@@ -68,6 +68,14 @@ psql -d <database> -f sql/create_agent_retention.sql
 `agent_daily_game_retention` 以 `(date, parent_agent_id, agent_id, slot_id)` 為主鍵。
 兩張表分別沿用 `casino_retention` 與 `game_retention` 的指標欄位，供營運總覽與 Agent 分析 API 使用。
 
+從 `slot_parent_bet` 重新整理並原子更新兩張 Agent retention 表：
+
+```bash
+psql -d <database> -f sql/refresh_agent_retention.sql
+```
+
+刷新腳本會在單一 transaction 中重建完整快照；若中途失敗，原有資料不會被部分覆蓋。
+
 此腳本包含 `CREATE INDEX CONCURRENTLY`，不可包在 transaction 中。大量匯入後需刷新 `player_daily_summary` 並更新統計資訊。
 
 ## 架構說明

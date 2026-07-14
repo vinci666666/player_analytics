@@ -423,7 +423,9 @@ def get_home_dashboard():
         if not latest_date:
             return jsonify({"error": "No operating data is available"}), 404
 
-        reference_date = datetime.now().date()
+        # Dashboard "current day" means the latest available data partition,
+        # which may lag behind the application server's calendar date.
+        reference_date = latest_date
         current_month_start = reference_date.replace(day=1)
         previous_month_end = current_month_start - timedelta(days=1)
         previous_month_start = previous_month_end.replace(day=1)
