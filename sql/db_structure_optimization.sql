@@ -11,6 +11,29 @@
 -- 1) Keep planner statistics fresh after large imports.
 ANALYZE public.slot_parent_bet;
 ANALYZE public.player_stats;
+ANALYZE public.player_daily;
+ANALYZE public.game_retention;
+ANALYZE public.casino_retention;
+
+-- Runtime startup should only establish connections. Keep schema changes in
+-- this explicit migration so deploys remain fast and predictable.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_player_id
+ON public.slot_parent_bet (player_id);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_bet_at_date
+ON public.slot_parent_bet ((bet_at::date));
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_bet_at_player_id
+ON public.slot_parent_bet (bet_at, player_id);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_player_id_bet_at
+ON public.slot_parent_bet (player_id, bet_at);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_player_daily_date_player
+ON public.player_daily (date, player_id);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_game_retention_date_slot
+ON public.game_retention (date, slot_id);
 
 -- 2) Speeds up new/old player filters when PostgreSQL can prefilter
 -- player_stats by first_spin_date before joining player_id.
@@ -71,3 +94,6 @@ REFRESH MATERIALIZED VIEW public.player_daily_summary;
 ANALYZE public.player_daily_summary;
 ANALYZE public.slot_parent_bet;
 ANALYZE public.player_stats;
+ANALYZE public.player_daily;
+ANALYZE public.game_retention;
+ANALYZE public.casino_retention;

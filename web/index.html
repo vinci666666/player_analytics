@@ -3,12 +3,27 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>iGaming Player Behavior & Financial Curve Analyzer</title>
+  <title>iGaming Operations Analytics Platform</title>
   <link rel="stylesheet" href="style.css">
   <!-- Load Plotly.js for premium interactive chart rendering -->
   <script src="https://cdn.plot.ly/plotly-2.24.1.min.js" charset="utf-8"></script>
 </head>
-<body>
+<body class="auth-locked">
+
+  <section id="login-screen" class="login-screen" aria-labelledby="login-title">
+    <div class="login-card">
+      <div class="login-brand-mark" aria-hidden="true">◆</div>
+      <span class="page-navigation-eyebrow">SECURE ANALYTICS ACCESS</span>
+      <h1 id="login-title">iGaming 營運分析平台</h1>
+      <p id="login-description">請輸入存取密碼以進入營運儀表板</p>
+      <form id="login-form">
+        <label id="login-password-label" for="login-password">存取密碼</label>
+        <input id="login-password" class="form-control" type="password" autocomplete="current-password" required autofocus>
+        <button id="login-submit" class="btn-primary" type="submit">登入平台</button>
+      </form>
+      <p id="login-error" class="login-error" role="alert" aria-live="assertive"></p>
+    </div>
+  </section>
 
   <header>
     <h1 id="nav-title">iGaming Analytics <span id="nav-subtitle">// Player Behavior Analyzer</span> <span class="badge-version">v1.0</span></h1>
@@ -19,6 +34,7 @@
         <div class="legend-pill"><span style="color:#f59e0b; font-weight:bold;">♦</span> <span id="legend-gs">Game Switch Marker</span></div>
       </div>
       <button id="btn-lang-toggle" class="btn-lang">繁中 / EN</button>
+      <button id="btn-logout" class="btn-lang" type="button">登出</button>
     </div>
   </header>
 
@@ -29,19 +45,19 @@
         <h2 id="page-nav-title">分析中心</h2>
       </div>
       <nav class="page-nav-list">
-        <a class="page-nav-item" href="#" data-page="home"><span class="page-nav-icon" aria-hidden="true">⌂</span><span id="page-nav-home">主頁</span></a>
-        <a class="page-nav-item" href="#" data-page="monthly"><span class="page-nav-icon" aria-hidden="true">▣</span><span id="page-nav-monthly">月分析</span></a>
-        <a class="page-nav-item" href="#" data-page="game"><span class="page-nav-icon" aria-hidden="true">◆</span><span id="page-nav-game">遊戲分析</span></a>
-        <a class="page-nav-item active" href="#player-analysis" data-page="player" aria-current="page"><span class="page-nav-icon" aria-hidden="true">♙</span><span id="page-nav-player">玩家分析</span></a>
+        <a class="page-nav-item" href="#" data-page="home"><span class="page-nav-icon" aria-hidden="true">⌂</span><span id="page-nav-home">營運總覽</span></a>
+        <a class="page-nav-item" href="#" data-page="monthly"><span class="page-nav-icon" aria-hidden="true">▣</span><span id="page-nav-monthly">月度營運分析</span></a>
+        <a class="page-nav-item" href="#" data-page="game"><span class="page-nav-icon" aria-hidden="true">◆</span><span id="page-nav-game">遊戲績效分析</span></a>
+        <a class="page-nav-item active" href="#player-analysis" data-page="player" aria-current="page"><span class="page-nav-icon" aria-hidden="true">♙</span><span id="page-nav-player">玩家行為分析</span></a>
       </nav>
     </aside>
 
     <!-- Left Column: Controls and Config -->
     <div class="control-sidebar">
-      <div class="panel">
-        <h2 id="filter-title" class="panel-title">Filter Selection</h2>
+      <div class="panel player-filter-panel">
+        <h2 id="filter-title" class="panel-title">玩家分析篩選條件</h2>
         
-        <div class="form-group" style="margin-top: 0.5rem; margin-bottom: 1.25rem; display: flex; flex-direction: column; gap: 0.5rem;">
+        <div class="form-group player-type-filter" style="margin-top: 0.5rem; margin-bottom: 1.25rem; display: flex; flex-direction: column; gap: 0.5rem;">
           <label id="label-filters-title" style="display: block; font-size: 0.85rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.05em;">Player Filters</label>
           
           <div style="display: flex; align-items: center; gap: 0.5rem;">
@@ -131,18 +147,95 @@
 
     </div>
 
+    <!-- Operations Home -->
+    <div id="home-analysis-content" class="home-analysis-content" hidden>
+      <div class="home-hero panel">
+        <div>
+          <span id="home-eyebrow" class="page-navigation-eyebrow">OPERATIONS OVERVIEW</span>
+          <h2 id="home-page-title" class="monthly-page-title">營運總覽</h2>
+          <p id="home-page-description" class="monthly-page-description">即時掌握營運績效、遊戲排行與高獲利玩家</p>
+        </div>
+        <div id="home-data-date" class="home-data-date">資料基準日：--</div>
+      </div>
+
+      <section class="home-section">
+        <div class="home-section-heading">
+          <h3 id="home-month-title">本月累積績效</h3>
+          <span id="home-month-range">--</span>
+        </div>
+        <div class="home-kpi-grid">
+          <div class="metric-card home-kpi-card"><span id="home-month-spins-label" class="metric-label">總 Spin 數</span><span id="home-month-spins" class="metric-value">--</span><span id="home-month-spins-delta" class="home-kpi-delta">--</span></div>
+          <div class="metric-card home-kpi-card"><span class="metric-label metric-label-with-unit"><span id="home-month-bet-label">總投注額</span><span class="metric-unit">IDR</span></span><span id="home-month-bet" class="metric-value">--</span><span id="home-month-bet-delta" class="home-kpi-delta">--</span></div>
+          <div class="metric-card home-kpi-card"><span class="metric-label metric-label-with-unit"><span id="home-month-win-label">總派彩額</span><span class="metric-unit">IDR</span></span><span id="home-month-win" class="metric-value">--</span><span id="home-month-win-delta" class="home-kpi-delta">--</span></div>
+          <div class="metric-card home-kpi-card"><span class="metric-label metric-label-with-unit"><span>GGR</span><span class="metric-unit">IDR</span></span><span id="home-month-ggr" class="metric-value">--</span><span id="home-month-ggr-delta" class="home-kpi-delta">--</span></div>
+        </div>
+      </section>
+
+      <section class="home-section">
+        <div class="home-section-heading"><h3 id="home-day-title">當日累積績效</h3><span id="home-day-date">--</span></div>
+        <div class="home-kpi-grid">
+          <div class="metric-card"><span id="home-day-spins-label" class="metric-label">總 Spin 數</span><span id="home-day-spins" class="metric-value">--</span></div>
+          <div class="metric-card"><span class="metric-label metric-label-with-unit"><span id="home-day-bet-label">總投注額</span><span class="metric-unit">IDR</span></span><span id="home-day-bet" class="metric-value">--</span></div>
+          <div class="metric-card"><span class="metric-label metric-label-with-unit"><span id="home-day-win-label">總派彩額</span><span class="metric-unit">IDR</span></span><span id="home-day-win" class="metric-value">--</span></div>
+          <div class="metric-card"><span class="metric-label metric-label-with-unit"><span>GGR</span><span class="metric-unit">IDR</span></span><span id="home-day-ggr" class="metric-value">--</span></div>
+        </div>
+      </section>
+
+      <div class="panel home-chart-panel"><div id="home-ggr-chart" class="home-ggr-chart"></div></div>
+
+      <section class="home-section">
+        <div class="home-section-heading"><h3 id="home-game-ranking-title">遊戲績效排名</h3></div>
+        <div class="home-two-column">
+          <div class="panel home-table-panel"><h4 id="home-game-7d-title">近 7 日 Top 10</h4><div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th id="home-game-7d-name">遊戲名稱</th><th>Spin</th><th>GGR</th></tr></thead><tbody id="home-game-7d-body"></tbody></table></div></div>
+          <div class="panel home-table-panel"><h4 id="home-game-day-title">當日 Top 5</h4><div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th id="home-game-day-name">遊戲名稱</th><th>Spin</th><th>GGR</th></tr></thead><tbody id="home-game-day-body"></tbody></table></div></div>
+        </div>
+      </section>
+
+      <section class="home-section">
+        <div class="home-section-heading"><h3 id="home-player-alert-title">高獲利玩家警示</h3></div>
+        <div class="home-two-column">
+          <div class="panel home-table-panel"><h4 id="home-player-7d-title">近 7 日 Top 10</h4><div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Username</th><th>Spin</th><th id="home-player-7d-bet">投注額</th><th id="home-player-7d-win">派彩額</th><th id="home-player-7d-profit">玩家獲利</th></tr></thead><tbody id="home-player-7d-body"></tbody></table></div></div>
+          <div class="panel home-table-panel"><h4 id="home-player-day-title">當日 Top 5</h4><div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Username</th><th>Spin</th><th id="home-player-day-bet">投注額</th><th id="home-player-day-win">派彩額</th><th id="home-player-day-profit">玩家獲利</th></tr></thead><tbody id="home-player-day-body"></tbody></table></div></div>
+        </div>
+      </section>
+      <p id="home-status" class="monthly-status" role="status"></p>
+    </div>
+
     <!-- Monthly Analysis -->
     <div id="monthly-analysis-content" class="monthly-analysis-content" hidden>
       <div class="monthly-toolbar panel">
         <div>
           <span id="monthly-eyebrow" class="page-navigation-eyebrow">MONTHLY ANALYSIS</span>
-          <h2 id="monthly-page-title" class="monthly-page-title">月分析</h2>
+          <h2 id="monthly-page-title" class="monthly-page-title">月度營運分析</h2>
           <p id="monthly-page-description" class="monthly-page-description">每日營運指標與月度趨勢</p>
         </div>
         <div class="monthly-date-controls">
-          <label id="monthly-label-month" for="monthly-month-select">分析月份</label>
-          <input id="monthly-month-select" class="form-control" type="month">
-          <button id="btn-load-monthly" class="btn-primary monthly-load-button" type="button">載入月分析</button>
+          <div class="monthly-control-field">
+            <label id="monthly-label-mode" for="monthly-mode-select">分析模式</label>
+            <select id="monthly-mode-select" class="form-control">
+              <option id="monthly-mode-single-option" value="single">單月資料</option>
+              <option id="monthly-mode-compare-option" value="compare">月比較</option>
+              <option id="monthly-mode-quarter-option" value="quarter">季分析</option>
+              <option id="monthly-mode-half-year-option" value="half-year">半年分析</option>
+              <option id="monthly-mode-year-option" value="year">年分析</option>
+            </select>
+          </div>
+          <div id="monthly-single-controls" class="monthly-control-field">
+            <label id="monthly-label-month" for="monthly-month-select">分析月份</label>
+            <input id="monthly-month-select" class="form-control" type="month">
+          </div>
+          <div id="monthly-compare-controls" class="monthly-compare-controls" hidden>
+            <div class="monthly-control-field">
+              <label id="monthly-label-start-month" for="monthly-start-month">開始月份</label>
+              <input id="monthly-start-month" class="form-control" type="month">
+            </div>
+            <span class="monthly-range-separator" aria-hidden="true">—</span>
+            <div class="monthly-control-field">
+              <label id="monthly-label-end-month" for="monthly-end-month">結束月份</label>
+              <input id="monthly-end-month" class="form-control" type="month">
+            </div>
+          </div>
+          <button id="btn-load-monthly" class="btn-primary monthly-load-button" type="button">執行月度分析</button>
         </div>
       </div>
 
@@ -150,8 +243,10 @@
         <div class="metric-card"><span id="monthly-label-avg-players" class="metric-label">平均玩家數</span><span id="monthly-avg-players" class="metric-value">--</span></div>
         <div class="metric-card"><span id="monthly-label-avg-dnu" class="metric-label">平均 DNU</span><span id="monthly-avg-dnu" class="metric-value">--</span></div>
         <div class="metric-card"><span id="monthly-label-avg-rtp" class="metric-label">平均 RTP</span><span id="monthly-avg-rtp" class="metric-value">--</span></div>
-        <div class="metric-card"><span id="monthly-label-total-bet" class="metric-label">總投注額</span><span id="monthly-total-bet" class="metric-value">--</span></div>
-        <div class="metric-card"><span id="monthly-label-total-win" class="metric-label">總派彩</span><span id="monthly-total-win" class="metric-value">--</span></div>
+        <div class="metric-card"><span id="monthly-label-total-spins" class="metric-label">總 Spin 數</span><span id="monthly-total-spins" class="metric-value">--</span></div>
+        <div class="metric-card"><span class="metric-label metric-label-with-unit"><span id="monthly-label-total-bet">總投注額</span><span class="metric-unit">IDR</span></span><span id="monthly-total-bet" class="metric-value">--</span></div>
+        <div class="metric-card"><span class="metric-label metric-label-with-unit"><span id="monthly-label-total-win">總派彩</span><span class="metric-unit">IDR</span></span><span id="monthly-total-win" class="metric-value">--</span></div>
+        <div class="metric-card"><span class="metric-label metric-label-with-unit"><span id="monthly-label-total-ggr">總 GGR</span><span class="metric-unit">IDR</span></span><span id="monthly-total-ggr" class="metric-value">--</span></div>
         <div class="metric-card"><span id="monthly-label-days" class="metric-label">資料天數</span><span id="monthly-days" class="metric-value">--</span></div>
       </div>
 
@@ -159,9 +254,30 @@
         <div class="panel monthly-chart-panel"><div id="monthly-rtp-chart" class="monthly-chart"></div></div>
         <div class="panel monthly-chart-panel"><div id="monthly-ggr-chart" class="monthly-chart"></div></div>
         <div class="panel monthly-chart-panel"><div id="monthly-player-chart" class="monthly-chart"></div></div>
-        <div class="panel monthly-chart-panel"><div id="monthly-dnu-chart" class="monthly-chart"></div></div>
+        <div class="panel monthly-chart-panel"><div id="monthly-dnu-rate-chart" class="monthly-chart"></div></div>
         <div class="panel monthly-chart-panel"><div id="monthly-retention-chart" class="monthly-chart"></div></div>
-        <div class="panel monthly-chart-panel"><div id="monthly-bet-type-chart" class="monthly-chart"></div></div>
+        <div id="monthly-bet-type-panel" class="panel monthly-chart-panel"><div id="monthly-bet-type-chart" class="monthly-chart"></div></div>
+        <div id="monthly-retention-3-panel" class="panel monthly-chart-panel" hidden><div id="monthly-retention-3-chart" class="monthly-chart"></div></div>
+        <div id="monthly-retention-7-panel" class="panel monthly-chart-panel" hidden><div id="monthly-retention-7-chart" class="monthly-chart"></div></div>
+        <div id="monthly-game-ranking-panel" class="panel monthly-chart-panel monthly-ranking-panel">
+          <h3 id="monthly-game-ranking-title" class="monthly-ranking-title">時間範圍內遊戲排名</h3>
+          <div class="monthly-ranking-table-wrap">
+            <table class="monthly-ranking-table">
+              <thead><tr>
+                <th><button type="button" data-ranking-key="game_name">遊戲名稱</button></th>
+                <th><button type="button" data-ranking-key="days">天數</button></th>
+                <th><button type="button" data-ranking-key="player_count">玩家數</button></th>
+                <th><button type="button" data-ranking-key="avg_spin_count">玩家平均 Spin 數</button></th>
+                <th><button type="button" data-ranking-key="avg_bet_amount">平均押注（IDR）</button></th>
+                <th><button type="button" data-ranking-key="total_spin_count">總 Spin 數</button></th>
+                <th><button type="button" data-ranking-key="total_bet_amount">總押注（IDR）</button></th>
+                <th><button type="button" data-ranking-key="total_win_amount">總贏分（IDR）</button></th>
+                <th><button type="button" data-ranking-key="ggr">GGR（IDR）</button></th>
+              </tr></thead>
+              <tbody id="monthly-game-ranking-body"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
       <p id="monthly-status" class="monthly-status" role="status"></p>
     </div>
@@ -171,7 +287,7 @@
       <div class="game-toolbar panel">
         <div>
           <span id="game-eyebrow" class="page-navigation-eyebrow">GAME ANALYSIS</span>
-          <h2 id="game-page-title" class="monthly-page-title">遊戲分析</h2>
+          <h2 id="game-page-title" class="monthly-page-title">遊戲績效分析</h2>
           <p id="game-page-description" class="monthly-page-description">依遊戲 ID 查看每日營運與玩家表現</p>
         </div>
         <div class="monthly-date-controls">
@@ -181,7 +297,7 @@
           <input id="game-start-date" class="form-control" type="date">
           <label id="game-label-end-date" for="game-end-date">結束日期</label>
           <input id="game-end-date" class="form-control" type="date">
-          <button id="btn-load-game" class="btn-primary monthly-load-button" type="button">載入遊戲分析</button>
+          <button id="btn-load-game" class="btn-primary monthly-load-button" type="button">執行遊戲分析</button>
         </div>
       </div>
 
@@ -189,8 +305,10 @@
         <div class="metric-card"><span id="game-label-avg-players" class="metric-label">平均玩家數</span><span id="game-avg-players" class="metric-value">--</span></div>
         <div class="metric-card"><span id="game-label-avg-dnu" class="metric-label">平均 DNU</span><span id="game-avg-dnu" class="metric-value">--</span></div>
         <div class="metric-card"><span id="game-label-avg-rtp" class="metric-label">平均 RTP</span><span id="game-avg-rtp" class="metric-value">--</span></div>
-        <div class="metric-card"><span id="game-label-total-bet" class="metric-label">總投注額</span><span id="game-total-bet" class="metric-value">--</span></div>
-        <div class="metric-card"><span id="game-label-total-win" class="metric-label">總派彩</span><span id="game-total-win" class="metric-value">--</span></div>
+        <div class="metric-card"><span id="game-label-total-spins" class="metric-label">總 Spin 數</span><span id="game-total-spins" class="metric-value">--</span></div>
+        <div class="metric-card"><span class="metric-label metric-label-with-unit"><span id="game-label-total-bet">總投注額</span><span class="metric-unit">IDR</span></span><span id="game-total-bet" class="metric-value">--</span></div>
+        <div class="metric-card"><span class="metric-label metric-label-with-unit"><span id="game-label-total-win">總派彩額</span><span class="metric-unit">IDR</span></span><span id="game-total-win" class="metric-value">--</span></div>
+        <div class="metric-card"><span class="metric-label metric-label-with-unit"><span id="game-label-total-ggr">總 GGR</span><span class="metric-unit">IDR</span></span><span id="game-total-ggr" class="metric-value">--</span></div>
         <div class="metric-card"><span id="game-label-days" class="metric-label">資料天數</span><span id="game-days" class="metric-value">--</span></div>
       </div>
 
@@ -200,6 +318,26 @@
         <div class="panel monthly-chart-panel"><div id="game-rtp-chart" class="monthly-chart"></div></div>
         <div class="panel monthly-chart-panel"><div id="game-retention-chart" class="monthly-chart"></div></div>
         <div class="panel monthly-chart-panel"><div id="game-bet-type-chart" class="monthly-chart"></div></div>
+        <div id="game-spin-distribution-panel" class="panel monthly-chart-panel" hidden><div id="game-spin-distribution-chart" class="monthly-chart"></div></div>
+        <div id="game-ranking-panel" class="panel monthly-chart-panel monthly-ranking-panel" hidden>
+          <h3 id="game-ranking-title" class="monthly-ranking-title">時間範圍內遊戲排名</h3>
+          <div class="monthly-ranking-table-wrap">
+            <table class="monthly-ranking-table">
+              <thead><tr>
+                <th><button type="button" data-game-ranking-key="game_name">遊戲名稱</button></th>
+                <th><button type="button" data-game-ranking-key="days">天數</button></th>
+                <th><button type="button" data-game-ranking-key="player_count">玩家數</button></th>
+                <th><button type="button" data-game-ranking-key="avg_spin_count">玩家平均 Spin 數</button></th>
+                <th><button type="button" data-game-ranking-key="avg_bet_amount">平均押注（IDR）</button></th>
+                <th><button type="button" data-game-ranking-key="total_spin_count">總 Spin 數</button></th>
+                <th><button type="button" data-game-ranking-key="total_bet_amount">總押注（IDR）</button></th>
+                <th><button type="button" data-game-ranking-key="total_win_amount">總贏分（IDR）</button></th>
+                <th><button type="button" data-game-ranking-key="ggr">GGR（IDR）</button></th>
+              </tr></thead>
+              <tbody id="game-ranking-body"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
       <p id="game-status" class="monthly-status" role="status"></p>
     </div>
@@ -208,7 +346,7 @@
     <div class="analytics-content">
       <!-- Summary Metrics -->
       <div class="metrics-section">
-        <h2 id="metrics-player-title" class="panel-title">Player Total Info</h2>
+        <h2 id="metrics-player-title" class="panel-title">玩家生命週期摘要</h2>
         <div class="metrics-grid">
           <div class="metric-card">
             <span id="label-stat-total-spins" class="metric-label">Total Spins</span>
@@ -276,15 +414,14 @@
 
       <!-- Detail Table Panel -->
       <div class="panel">
-        <h2 id="table-panel-title" class="panel-title">📊 Sequence Output Table</h2>
+        <h2 id="table-panel-title" class="panel-title">📊 投注序列明細</h2>
         <div class="table-wrapper">
           <table id="results-table" class="data-table">
             <thead>
               <tr>
                 <th id="th-seq">Play Seq</th>
-                <th id="th-player">Player ID</th>
                 <th id="th-time">Timestamp (bet_at)</th>
-                <th id="th-slot">Slot ID</th>
+                <th id="th-slot">遊戲名稱</th>
                 <th id="th-bet-type">Bet Type</th>
                 <th id="th-switch">Game Switch?</th>
                 <th id="th-free">Free Game?</th>
@@ -296,7 +433,7 @@
             </thead>
             <tbody id="table-body">
               <tr>
-                <td id="td-empty" colspan="11" style="text-align: center; color: var(--text-secondary); padding: 2rem;">
+                <td id="td-empty" colspan="10" style="text-align: center; color: var(--text-secondary); padding: 2rem;">
                   Please select a Date and Player ID from the filter sidebar.
                 </td>
               </tr>
@@ -307,6 +444,8 @@
     </div>
   </main>
 
-  <script src="app.js"></script>
+  <div id="navigation-toast" class="navigation-toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="app.js"></script>
 </body>
 </html>

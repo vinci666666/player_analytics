@@ -1,147 +1,41 @@
 import os
 import sys
-import json
 import calendar
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, send_from_directory
-import psycopg2
 from psycopg2.extras import RealDictCursor
-from psycopg2.pool import ThreadedConnectionPool
+
+if __package__:
+    from .infrastructure import (
+        CONFIG_PATH,
+        TtlCache,
+        apply_query_timeout,
+        db_error_response,
+        get_db_connection,
+        get_game_names,
+        is_player_daily_summary_available,
+        release_db_connection,
+    )
+    from .security import configure_authentication
+else:
+    from infrastructure import (
+        CONFIG_PATH,
+        TtlCache,
+        apply_query_timeout,
+        db_error_response,
+        get_db_connection,
+        get_game_names,
+        is_player_daily_summary_available,
+        release_db_connection,
+    )
+    from security import configure_authentication
 
 # 初始化 Flask 應用，設定靜態檔案目錄為專案的 web 資料夾
 app = Flask(__name__, static_folder=os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'web')))
+configure_authentication(app)
 
-# 設定資料庫配置檔案的絕對路徑
-CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config.json'))
-
-def load_db_config():
-    """載入資料庫連線配置。如果 config.json 遺失，則會建立預設配置。"""
-    default_config = {
-        "host": "localhost",
-        "port": 5432,
-        "database": "analytics",
-        "user": "postgres",
-        "password": "postgres"
-    }
-    
-    # 若配置檔不存在，則自動寫入預設配置
-    if not os.path.exists(CONFIG_PATH):
-        try:
-            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
-                json.dump(default_config, f, indent=4)
-            print(f"已於 {CONFIG_PATH} 建立預設資料庫設定檔")
-        except Exception as e:
-            print(f"警告：無法建立設定檔 config.json: {e}", file=sys.stderr)
-        return default_config
-
-    # 讀取現有的配置並補齊可能遺失的鍵值
-    try:
-        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-            for key, val in default_config.items():
-                if key not in config:
-                    config[key] = val
-            return config
-    except Exception as e:
-        print(f"讀取 config.json 發生錯誤：{e}。將使用預設設定值。", file=sys.stderr)
-        return default_config
-
-def get_game_names():
-    """Return the slot_id-to-name mapping configured in config.json."""
-    config = load_db_config()
-    game_names = config.get("game_name", {})
-    return {str(slot_id): str(name) for slot_id, name in game_names.items()}
-
-db_pool = None
-dates_cache = {
-    "expires_at": None,
-    "dates": None,
-}
-DATES_CACHE_TTL_SECONDS = 300
-QUERY_TIMEOUT_MS = 30000
-PLAYER_DAILY_SUMMARY = "public.player_daily_summary"
-
-def init_db_pool():
-    """初始化資料庫連線池，並自動確認/建立索引。"""
-    global db_pool
-    config = load_db_config()
-    try:
-        db_pool = ThreadedConnectionPool(
-            minconn=1,
-            maxconn=10,
-            host=config["host"],
-            port=config["port"],
-            database=config["database"],
-            user=config["user"],
-            password=config["password"],
-            connect_timeout=5
-        )
-        print("資料庫連線池初始化成功")
-        
-        # 自動檢查並建立索引以提升效能
-        conn = db_pool.getconn()
-        conn.autocommit = True
-        cursor = conn.cursor()
-        try:
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_slot_parent_bet_player_id ON public.slot_parent_bet (player_id);")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_slot_parent_bet_bet_at_date ON public.slot_parent_bet ((bet_at::date));")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_slot_parent_bet_bet_at_player_id ON public.slot_parent_bet (bet_at, player_id);")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_slot_parent_bet_player_id_bet_at ON public.slot_parent_bet (player_id, bet_at);")
-            print("資料庫效能索引確認與建立完成")
-        except Exception as idx_err:
-            print(f"警告：自動建立索引失敗: {idx_err}", file=sys.stderr)
-        finally:
-            conn.autocommit = False
-            db_pool.putconn(conn)
-    except Exception as e:
-        print("\n=== 資料庫連線錯誤 (DATABASE CONNECTION ERROR) ===", file=sys.stderr)
-        print(f"無法建立連線池: {config}", file=sys.stderr)
-        print(f"錯誤原因: {e}", file=sys.stderr)
-        raise e
-
-def get_db_connection():
-    """從連線池獲取 PostgreSQL 連線。"""
-    global db_pool
-    if db_pool is None:
-        init_db_pool()
-    conn = db_pool.getconn()
-    conn.autocommit = False
-    return conn
-
-def release_db_connection(conn):
-    """將連線釋放回連線池。"""
-    global db_pool
-    if db_pool and conn:
-        try:
-            if not conn.closed:
-                conn.rollback()
-        except Exception as rollback_err:
-            print(f"Failed to reset database connection before returning it to the pool: {rollback_err}", file=sys.stderr)
-        db_pool.putconn(conn)
-
-def apply_query_timeout(cursor):
-    cursor.execute("SET LOCAL statement_timeout = %s", (QUERY_TIMEOUT_MS,))
-
-def db_error_response(error):
-    error_text = str(error)
-    if "statement timeout" in error_text or "canceling statement due to statement timeout" in error_text:
-        return jsonify({"error": "查詢超過 30 秒，請縮小範圍或重新送出請求"}), 504
-    return jsonify({"error": error_text}), 500
-
-def first_column(row):
-    if isinstance(row, dict):
-        return next(iter(row.values()))
-    return row[0]
-
-def is_player_daily_summary_available(cursor):
-    cursor.execute("""
-        SELECT COALESCE((
-            SELECT c.relkind = 'm' AND c.relispopulated
-            FROM pg_class c
-            WHERE c.oid = to_regclass(%s)
-        ), false) AS is_available;
-    """, (PLAYER_DAILY_SUMMARY,))
-    return bool(first_column(cursor.fetchone()))
+dates_cache = TtlCache(ttl_seconds=300)
+home_dashboard_cache = TtlCache(ttl_seconds=60)
 
 # ----------------------------------------------------
 # 靜態網頁檔案託管路由
@@ -162,8 +56,9 @@ def serve_static(path):
 @app.route('/api/dates', methods=['GET'])
 def get_dates():
     """獲取資料表中有投注紀錄的所有不重複日期清單（遞減排序），使用遞迴 CTE 鬆散索引掃描優化。"""
-    if dates_cache["dates"] is not None and dates_cache["expires_at"] and datetime.utcnow() < dates_cache["expires_at"]:
-        return jsonify(dates_cache["dates"])
+    cached_dates = dates_cache.get("available_dates")
+    if cached_dates is not None:
+        return jsonify(cached_dates)
 
     conn = None
     try:
@@ -184,8 +79,7 @@ def get_dates():
         rows = cursor.fetchall()
         # 格式化日期為 YYYY-MM-DD 字串陣列
         dates = [row[0].strftime('%Y-%m-%d') for row in rows]
-        dates_cache["dates"] = dates
-        dates_cache["expires_at"] = datetime.utcnow() + timedelta(seconds=DATES_CACHE_TTL_SECONDS)
+        dates_cache.set("available_dates", dates)
         return jsonify(dates)
     except Exception as e:
         print(f"獲取日期清單失敗: {e}", file=sys.stderr)
@@ -211,6 +105,10 @@ def get_monthly_data():
 
     if start_day > end_day:
         return jsonify({"error": "start_date must not be later than end_date"}), 400
+
+    month_span = (end_day.year - start_day.year) * 12 + end_day.month - start_day.month + 1
+    if month_span > 12:
+        return jsonify({"error": "Monthly date range must not exceed 12 calendar months"}), 400
 
     conn = None
     try:
@@ -283,9 +181,15 @@ def get_game_data():
             SELECT
                 date, slot_id, player_count, dnu, retention_1, retention_3, retention_7,
                 total_spin_count, total_bet_amount, total_win_amount,
+                CASE
+                    WHEN total_bet_amount > 0 THEN total_win_amount / total_bet_amount
+                    ELSE 0
+                END AS rtp,
                 bet_1_player_count, bet_1_spin_count, bet_1_total_bet_amount, bet_1_total_win_amount,
                 bet_2_player_count, bet_2_spin_count, bet_2_total_bet_amount, bet_2_total_win_amount,
                 bet_3_player_count, bet_3_spin_count, bet_3_total_bet_amount, bet_3_total_win_amount
+                , dist_0_10, dist_10_20, dist_20_50, dist_50_100,
+                  dist_100_300, dist_300_500, dist_500_1000, dist_1000_plus
             FROM public.game_retention
             WHERE date >= %s AND date <= %s
         """
@@ -310,6 +214,238 @@ def get_game_data():
         ])
     except Exception as e:
         print(f"Failed to load game metrics ({start_date} ~ {end_date}, slot={slot_id}): {e}", file=sys.stderr)
+        return db_error_response(e)
+    finally:
+        if conn:
+            release_db_connection(conn)
+
+@app.route('/api/game-ranking', methods=['GET'])
+def get_game_ranking():
+    """Return game totals for the selected monthly-analysis period."""
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    if not start_date or not end_date:
+        return jsonify({"error": "start_date and end_date are required"}), 400
+    try:
+        start_day = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end_day = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"error": "Dates must use YYYY-MM-DD format"}), 400
+    if start_day > end_day:
+        return jsonify({"error": "start_date must not be later than end_date"}), 400
+    month_span = (end_day.year - start_day.year) * 12 + end_day.month - start_day.month + 1
+    if month_span > 12:
+        return jsonify({"error": "Game ranking range must not exceed 12 calendar months"}), 400
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        apply_query_timeout(cursor)
+        cursor.execute("""
+            SELECT slot_id, COUNT(DISTINCT date) AS days,
+                   SUM(player_count) AS player_count,
+                   SUM(total_spin_count)::NUMERIC / NULLIF(SUM(player_count), 0) AS avg_spin_count,
+                   SUM(total_bet_amount) / NULLIF(SUM(total_spin_count), 0) AS avg_bet_amount,
+                   SUM(total_spin_count) AS total_spin_count,
+                   SUM(total_bet_amount) AS total_bet_amount,
+                   SUM(total_win_amount) AS total_win_amount,
+                   SUM(total_bet_amount) - SUM(total_win_amount) AS ggr
+            FROM public.game_retention
+            WHERE date >= %s AND date <= %s
+            GROUP BY slot_id
+            ORDER BY total_spin_count DESC;
+        """, (start_day, end_day))
+        game_names = get_game_names()
+        return jsonify([{**row, "game_name": game_names.get(str(row["slot_id"]), str(row["slot_id"]))} for row in cursor.fetchall()])
+    except Exception as e:
+        print(f"Failed to load game ranking ({start_date} ~ {end_date}): {e}", file=sys.stderr)
+        return db_error_response(e)
+    finally:
+        if conn:
+            release_db_connection(conn)
+
+@app.route('/api/home-dashboard', methods=['GET'])
+def get_home_dashboard():
+    """Return the latest operations overview used by the home dashboard."""
+    cached_dashboard = home_dashboard_cache.get("overview")
+    if cached_dashboard is not None:
+        return jsonify(cached_dashboard)
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        apply_query_timeout(cursor)
+
+        cursor.execute("SELECT MAX(date) AS latest_date FROM public.casino_retention;")
+        latest_row = cursor.fetchone()
+        latest_date = latest_row.get("latest_date") if latest_row else None
+        if not latest_date:
+            return jsonify({"error": "No operating data is available"}), 404
+
+        reference_date = datetime.now().date()
+        current_month_start = reference_date.replace(day=1)
+        previous_month_end = current_month_start - timedelta(days=1)
+        previous_month_start = previous_month_end.replace(day=1)
+        previous_compare_end = min(
+            previous_month_start + timedelta(days=reference_date.day - 1),
+            previous_month_end
+        )
+        ggr_start = reference_date - timedelta(days=29)
+        seven_day_start = reference_date - timedelta(days=6)
+
+        cursor.execute("""
+            SELECT
+                COALESCE(SUM(total_spin_count) FILTER (WHERE date BETWEEN %s AND %s), 0) AS current_spins,
+                COALESCE(SUM(total_bet_amount) FILTER (WHERE date BETWEEN %s AND %s), 0) AS current_bet,
+                COALESCE(SUM(total_win_amount) FILTER (WHERE date BETWEEN %s AND %s), 0) AS current_win,
+                COALESCE(SUM(total_spin_count) FILTER (WHERE date BETWEEN %s AND %s), 0) AS previous_spins,
+                COALESCE(SUM(total_bet_amount) FILTER (WHERE date BETWEEN %s AND %s), 0) AS previous_bet,
+                COALESCE(SUM(total_win_amount) FILTER (WHERE date BETWEEN %s AND %s), 0) AS previous_win,
+                COALESCE(SUM(total_spin_count) FILTER (WHERE date = %s), 0) AS today_spins,
+                COALESCE(SUM(total_bet_amount) FILTER (WHERE date = %s), 0) AS today_bet,
+                COALESCE(SUM(total_win_amount) FILTER (WHERE date = %s), 0) AS today_win
+            FROM public.casino_retention
+            WHERE date BETWEEN %s AND %s;
+        """, (
+            current_month_start, reference_date,
+            current_month_start, reference_date,
+            current_month_start, reference_date,
+            previous_month_start, previous_compare_end,
+            previous_month_start, previous_compare_end,
+            previous_month_start, previous_compare_end,
+            reference_date, reference_date, reference_date,
+            previous_month_start, reference_date
+        ))
+        totals = cursor.fetchone()
+        current_month = {
+            "total_spin_count": totals["current_spins"],
+            "total_bet_amount": totals["current_bet"],
+            "total_win_amount": totals["current_win"],
+            "ggr": totals["current_bet"] - totals["current_win"]
+        }
+        previous_month = {
+            "total_spin_count": totals["previous_spins"],
+            "total_bet_amount": totals["previous_bet"],
+            "total_win_amount": totals["previous_win"],
+            "ggr": totals["previous_bet"] - totals["previous_win"]
+        }
+        today = {
+            "total_spin_count": totals["today_spins"],
+            "total_bet_amount": totals["today_bet"],
+            "total_win_amount": totals["today_win"],
+            "ggr": totals["today_bet"] - totals["today_win"]
+        }
+        cursor.execute("""
+            SELECT date, total_bet_amount - total_win_amount AS ggr
+            FROM public.casino_retention
+            WHERE date >= %s AND date <= %s
+            ORDER BY date;
+        """, (ggr_start, reference_date))
+        ggr_30d = cursor.fetchall()
+
+        def load_game_rankings(start_day, end_day, limit):
+            cursor.execute("""
+                SELECT slot_id, SUM(total_spin_count) AS total_spin_count,
+                       SUM(total_bet_amount) AS total_bet_amount,
+                       SUM(total_win_amount) AS total_win_amount,
+                       SUM(total_bet_amount) - SUM(total_win_amount) AS ggr
+                FROM public.game_retention
+                WHERE date >= %s AND date <= %s
+                GROUP BY slot_id
+                ORDER BY total_spin_count DESC
+                LIMIT %s;
+            """, (start_day, end_day, limit))
+            game_names = get_game_names()
+            return [{**row, "game_name": game_names.get(str(row["slot_id"]), str(row["slot_id"]))} for row in cursor.fetchall()]
+
+        def load_player_alerts(start_day, end_day, limit):
+            if is_player_daily_summary_available(cursor):
+                cursor.execute("""
+                    SELECT player_id, SUM(spin_count) AS spin_count,
+                           SUM(total_bet_amount) AS total_bet,
+                           SUM(total_prize) AS total_win,
+                           SUM(net_profit) AS profit
+                    FROM public.player_daily_summary
+                    WHERE play_date >= %s AND play_date <= %s
+                    GROUP BY player_id
+                    HAVING SUM(net_profit) > 0
+                    ORDER BY profit DESC
+                    LIMIT %s;
+                """, (start_day, end_day, limit))
+            else:
+                cursor.execute("""
+                    SELECT player_id,
+                           SUM(bet_1_spin_count + bet_2_spin_count + bet_3_spin_count) AS spin_count,
+                           SUM(total_bet_1_amount + total_bet_2_amount + total_bet_3_amount) AS total_bet,
+                           SUM(total_win_1_amount + total_win_2_amount + total_win_3_amount) AS total_win,
+                           SUM(total_win_1_amount + total_win_2_amount + total_win_3_amount)
+                             - SUM(total_bet_1_amount + total_bet_2_amount + total_bet_3_amount) AS profit
+                    FROM public.player_daily
+                    WHERE date >= %s AND date <= %s
+                    GROUP BY player_id
+                    HAVING SUM(total_win_1_amount + total_win_2_amount + total_win_3_amount)
+                             - SUM(total_bet_1_amount + total_bet_2_amount + total_bet_3_amount) > 0
+                    ORDER BY profit DESC
+                    LIMIT %s;
+                """, (start_day, end_day, limit))
+            rows = cursor.fetchall()
+            player_ids = [row["player_id"] for row in rows]
+            if not player_ids:
+                return rows
+            cursor.execute("""
+                SELECT player_id, player_username
+                FROM public.player_stats
+                WHERE player_id = ANY(%s)
+            """, (player_ids,))
+            usernames = {
+                row["player_id"]: row.get("player_username")
+                for row in cursor.fetchall()
+            }
+            return [{
+                **row,
+                "username": usernames.get(row["player_id"]) or str(row["player_id"])
+            } for row in rows]
+
+        games_7d = load_game_rankings(seven_day_start, reference_date, 10)
+        games_today = load_game_rankings(reference_date, reference_date, 5)
+        players_7d = load_player_alerts(seven_day_start, reference_date, 10)
+        players_today = load_player_alerts(reference_date, reference_date, 5)
+
+        def normalize_player_rows(rows):
+            return [{
+                **row,
+                "total_spin_count": row.get("spin_count", 0),
+                "total_bet_amount": row.get("total_bet", 0),
+                "total_win_amount": row.get("total_win", 0)
+            } for row in rows]
+
+        normalized_players_7d = normalize_player_rows(players_7d)
+        normalized_players_today = normalize_player_rows(players_today)
+        payload = {
+            "as_of_date": latest_date.isoformat(),
+            "latest_date": latest_date.isoformat(),
+            "reference_date": reference_date.isoformat(),
+            "current_month_start": current_month_start.isoformat(),
+            "previous_month_start": previous_month_start.isoformat(),
+            "previous_month_end": previous_compare_end.isoformat(),
+            "current_month": current_month,
+            "previous_month": previous_month,
+            "today": today,
+            "current_day": today,
+            "ggr_30d": [{**row, "date": row["date"].isoformat()} for row in ggr_30d],
+            "games_7d": games_7d,
+            "games_today": games_today,
+            "players_7d": players_7d,
+            "players_today": players_today,
+            "game_rankings": {"seven_day": games_7d, "current_day": games_today},
+            "player_alerts": {"seven_day": normalized_players_7d, "current_day": normalized_players_today}
+        }
+        home_dashboard_cache.set("overview", payload)
+        return jsonify(payload)
+    except Exception as e:
+        print(f"Failed to load home dashboard: {e}", file=sys.stderr)
         return db_error_response(e)
     finally:
         if conn:
