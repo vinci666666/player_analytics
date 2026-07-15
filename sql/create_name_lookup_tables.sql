@@ -1,7 +1,11 @@
 CREATE TABLE IF NOT EXISTS public.agent_name (
     agent_id INTEGER PRIMARY KEY,
-    agent_name VARCHAR(255) NOT NULL
+    agent_name VARCHAR(255) NOT NULL,
+    parent_agent INTEGER NOT NULL
 );
+
+ALTER TABLE public.agent_name
+    ADD COLUMN IF NOT EXISTS parent_agent INTEGER;
 
 CREATE TABLE IF NOT EXISTS public.game_name (
     game_id INTEGER PRIMARY KEY,
