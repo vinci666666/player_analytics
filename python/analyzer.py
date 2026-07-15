@@ -68,9 +68,12 @@ def load_data_from_db(player_id=None, date_filter=None):
             import json
             with open(config_path, 'r', encoding='utf-8') as f:
                 loaded = json.load(f)
+                local_db = loaded.get("localDB", {})
+                if not isinstance(local_db, dict):
+                    raise ValueError("config.json localDB must contain a JSON object")
                 for key in config:
-                    if key in loaded:
-                        config[key] = loaded[key]
+                    if key in local_db:
+                        config[key] = local_db[key]
         except Exception as e:
             print(f"警告：載入 config.json 失敗: {e}")
             

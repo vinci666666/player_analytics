@@ -48,7 +48,8 @@ DASHBOARD_SESSION_SECRET=<固定且足夠長的隨機字串>
 DASHBOARD_COOKIE_SECURE=true
 ```
 
-`config.json` 保存資料庫連線及 `game_name` 對照。設定會快取，檔案異動時自動重新載入。
+`config.json` 保存資料庫連線設定；遊戲與 Agent 名稱分別統一讀取
+`localDB.public.game_name`、`localDB.public.agent_name`。
 
 ## 效能維護
 
@@ -58,25 +59,35 @@ API 使用 PostgreSQL 連線池及 30 秒查詢逾時；可重用的日期列表
 psql -d <database> -f sql/db_structure_optimization.sql
 ```
 
-Agent 分析上線前請先建立依代理層級彙總的 retention 資料表：
+Agent 分析統一讀取 `localDB.public.agent_daily_retention`。上線前請先建立依代理層級彙總的 retention 資料表：
 
 ```bash
 psql -d <database> -f sql/create_agent_retention.sql
 ```
 
-`agent_daily_retention` 以 `(date, parent_agent_id, agent_id)` 為主鍵；
-`agent_daily_game_retention` 以 `(date, parent_agent_id, agent_id, slot_id)` 為主鍵。
-兩張表分別沿用 `casino_retention` 與 `game_retention` 的指標欄位，供營運總覽與 Agent 分析 API 使用。
+`agent_daily_retention` 以 `(date, parent_agent_id, agent_id)` 為主鍵，沿用
+`casino_retention` 的指標欄位，供營運總覽與 Agent 分析 API 使用。Agent 分析不依賴
+`agent_daily_game_retention`。
 
-從 `slot_parent_bet` 重新整理並原子更新兩張 Agent retention 表：
+從 `slot_parent_bet` 重新整理 Agent retention 表：
 
 ```bash
-psql -d <database> -f sql/refresh_agent_retention.sql
+psql -d <database> -f sql/insert_agent_daily_retention.sql
 ```
 
 刷新腳本會在單一 transaction 中重建完整快照；若中途失敗，原有資料不會被部分覆蓋。
 
 此腳本包含 `CREATE INDEX CONCURRENTLY`，不可包在 transaction 中。大量匯入後需刷新 `player_daily_summary` 並更新統計資訊。
+
+服務啟動後會在 `Asia/Taipei` 時區每天 `02:00:00` 自動檢查前一天的
+`player_daily`、`casino_retention`、`game_retention` 與
+`agent_daily_retention`。缺少的日期會從本機 `slot_parent_bet` 補算；四張表的補期在
+同一個 transaction 中執行，失敗時會全部回滾。排程也會一併補上原始資料中已存在、
+但四張彙總表仍有缺漏的較早日期。
+
+每批 `slot_parent_bet` 同步完成前，服務會重新彙總該批涉及玩家的 `player_stats`，
+並在同一個 transaction 中寫入；若 `player_stats` 更新失敗，該批同步也會回滾。
+需要手動全量校正時可執行 `sql/insert_player_stats.sql`。
 
 ## 架構說明
 

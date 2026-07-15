@@ -193,12 +193,14 @@
       </section>
 
       <section class="home-section">
-        <div class="home-section-heading"><h3 id="home-agent-performance-title">Agent 營運績效</h3><span>依 GGR 排序</span></div>
-        <div class="home-two-column">
-          <div class="panel home-chart-panel"><div id="home-agent-7d-chart" class="home-agent-chart"></div></div>
-          <div class="panel home-chart-panel"><div id="home-agent-day-chart" class="home-agent-chart"></div></div>
-          <div class="panel home-table-panel"><h4 id="home-agent-7d-title">近 7 日</h4><div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Parent Agent</th><th>Agent</th><th>人數</th><th>總押</th><th>總贏</th><th>GGR</th></tr></thead><tbody id="home-agent-7d-body"></tbody></table></div></div>
-          <div class="panel home-table-panel"><h4 id="home-agent-day-title">當日</h4><div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Parent Agent</th><th>Agent</th><th>人數</th><th>總押</th><th>總贏</th><th>GGR</th></tr></thead><tbody id="home-agent-day-body"></tbody></table></div></div>
+        <div class="home-section-heading"><h3 id="home-agent-performance-title">Agent 營運績效</h3><span>依 Spin 排序</span></div>
+        <div class="panel home-agent-performance-panel">
+          <div class="home-two-column">
+            <div class="panel home-chart-panel"><div id="home-agent-7d-chart" class="home-agent-chart"></div></div>
+            <div class="panel home-chart-panel"><div id="home-agent-day-chart" class="home-agent-chart"></div></div>
+            <div class="panel home-table-panel"><h4 id="home-agent-7d-title">近 7 日 Top 10</h4><div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Parent Agent</th><th>Agent</th><th>人數</th><th>Spin</th><th>總押</th><th>總贏</th><th>GGR</th></tr></thead><tbody id="home-agent-7d-body"></tbody></table></div></div>
+            <div class="panel home-table-panel"><h4 id="home-agent-day-title">當日 Top 10</h4><div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Parent Agent</th><th>Agent</th><th>人數</th><th>Spin</th><th>總押</th><th>總贏</th><th>GGR</th></tr></thead><tbody id="home-agent-day-body"></tbody></table></div></div>
+          </div>
         </div>
       </section>
 
@@ -304,10 +306,18 @@
         <div class="monthly-date-controls">
           <label id="game-label-slot" for="game-slot-select">遊戲</label>
           <select id="game-slot-select" class="form-control game-slot-select"><option value="ALL">全部遊戲</option></select>
-          <label id="game-label-start-date" for="game-start-date">開始日期</label>
-          <input id="game-start-date" class="form-control" type="date">
-          <label id="game-label-end-date" for="game-end-date">結束日期</label>
-          <input id="game-end-date" class="form-control" type="date">
+          <label id="game-label-date-mode" for="game-date-mode-select">時間範圍</label>
+          <select id="game-date-mode-select" class="form-control">
+            <option id="game-date-mode-today" value="today">今日</option>
+            <option id="game-date-mode-seven-days" value="seven-days">近 7 日（包含今日）</option>
+            <option id="game-date-mode-custom" value="custom">任意範圍</option>
+          </select>
+          <div id="game-custom-date-controls" class="game-custom-date-controls" hidden>
+            <label id="game-label-start-date" for="game-start-date">開始日期</label>
+            <input id="game-start-date" class="form-control" type="date">
+            <label id="game-label-end-date" for="game-end-date">結束日期</label>
+            <input id="game-end-date" class="form-control" type="date">
+          </div>
           <button id="btn-load-game" class="btn-primary monthly-load-button" type="button">執行遊戲分析</button>
         </div>
       </div>
@@ -367,7 +377,7 @@
           <label for="agent-select">Agent</label>
           <select id="agent-select" class="form-control"><option value="ALL">全部</option></select>
           <label for="agent-bet-type-select">Bet Type</label>
-          <select id="agent-bet-type-select" class="form-control"><option value="ALL">全部</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
+          <select id="agent-bet-type-select" class="form-control"><option value="ALL">全部</option><option value="1">Normal Bet</option><option value="2">Ante Bet</option><option value="3">Buy Feature</option></select>
           <label for="agent-start-date">開始日期</label>
           <input id="agent-start-date" class="form-control" type="date">
           <label for="agent-end-date">結束日期</label>
@@ -378,11 +388,11 @@
 
       <div class="panel monthly-ranking-panel">
         <h3 class="monthly-ranking-title">Cube</h3>
-        <div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Game Name</th><th>Player Count</th><th>DNU</th><th>Spin Count</th><th>Total Bet</th><th>Total Win</th><th>GGR</th></tr></thead><tbody id="agent-cube-body"></tbody></table></div>
+        <div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Parent Agent / Agent</th><th>Player Count</th><th>DNU</th><th>Spin Count</th><th>Total Bet</th><th>Total Win</th><th>GGR</th></tr></thead><tbody id="agent-cube-body"></tbody></table></div>
       </div>
       <div class="panel monthly-ranking-panel">
         <h3 class="monthly-ranking-title">Details</h3>
-        <div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Date</th><th>Game Name</th><th>Bet Type</th><th>Player Count</th><th>Total Bet</th><th>Total Win</th><th>GGR</th></tr></thead><tbody id="agent-details-body"></tbody></table></div>
+        <div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Date</th><th>Parent Agent / Agent</th><th>Bet Type</th><th>Player Count</th><th>Total Bet</th><th>Total Win</th><th>GGR</th></tr></thead><tbody id="agent-details-body"></tbody></table></div>
       </div>
       <p id="agent-status" class="monthly-status" role="status"></p>
     </div>

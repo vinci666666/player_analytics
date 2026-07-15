@@ -13,6 +13,13 @@ from psycopg2.pool import ThreadedConnectionPool
 CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config.json'))
 QUERY_TIMEOUT_MS = 30_000
 PLAYER_DAILY_SUMMARY = "public.player_daily_summary"
+LOCAL_DB_DEFAULTS = {
+    "host": "localhost",
+    "port": 5432,
+    "database": "analytics",
+    "user": "postgres",
+    "password": "postgres",
+}
 
 _db_pool = None
 _config_cache = None
@@ -23,16 +30,23 @@ _pool_lock = Lock()
 def load_config():
     """Load and cache project configuration, invalidating when the file changes."""
     global _config_cache, _config_mtime
-    defaults = {
-        "host": "localhost", "port": 5432, "database": "analytics",
-        "user": "postgres", "password": "postgres", "game_name": {}
-    }
+    defaults = {"localDB": LOCAL_DB_DEFAULTS.copy()}
     try:
         mtime = os.path.getmtime(CONFIG_PATH)
         if _config_cache is not None and mtime == _config_mtime:
             return _config_cache
         with open(CONFIG_PATH, 'r', encoding='utf-8') as config_file:
-            config = {**defaults, **json.load(config_file)}
+            loaded = json.load(config_file)
+        if not isinstance(loaded, dict):
+            raise ValueError("config.json must contain a JSON object")
+        local_db = loaded.get("localDB", {})
+        if not isinstance(local_db, dict):
+            raise ValueError("config.json localDB must contain a JSON object")
+        config = {
+            **defaults,
+            **loaded,
+            "localDB": {**LOCAL_DB_DEFAULTS, **local_db},
+        }
         _config_cache, _config_mtime = config, mtime
         return config
     except FileNotFoundError:
@@ -48,13 +62,60 @@ def load_config():
         return defaults
 
 
-def get_game_names():
-    return {str(slot_id): str(name) for slot_id, name in load_config().get("game_name", {}).items()}
+def get_game_names(cursor=None):
+    """Return the game ID/name lookup from localDB.public.game_name."""
+    owns_connection = cursor is None
+    connection = None
+    try:
+        if owns_connection:
+            connection = get_db_connection()
+            cursor = connection.cursor()
+            apply_query_timeout(cursor)
+        cursor.execute("""
+            SELECT game_id, game_name
+            FROM public.game_name
+            ORDER BY game_id;
+        """)
+        rows = cursor.fetchall()
+        if rows and isinstance(rows[0], dict):
+            return {str(row["game_id"]): str(row["game_name"]) for row in rows}
+        return {str(game_id): str(game_name) for game_id, game_name in rows}
+    finally:
+        if owns_connection and connection:
+            release_db_connection(connection)
+
+
+def get_agent_names(cursor=None):
+    """Return the agent ID/name lookup from localDB.public.agent_name."""
+    owns_connection = cursor is None
+    connection = None
+    try:
+        if owns_connection:
+            connection = get_db_connection()
+            cursor = connection.cursor()
+            apply_query_timeout(cursor)
+        cursor.execute("""
+            SELECT agent_id, agent_name
+            FROM public.agent_name
+            ORDER BY agent_id;
+        """)
+        rows = cursor.fetchall()
+        if rows and isinstance(rows[0], dict):
+            return {str(row["agent_id"]): str(row["agent_name"]) for row in rows}
+        return {str(agent_id): str(agent_name) for agent_id, agent_name in rows}
+    finally:
+        if owns_connection and connection:
+            release_db_connection(connection)
+
+
+def get_local_db_config():
+    """Return the local PostgreSQL connection settings from config.json."""
+    return load_config()["localDB"].copy()
 
 
 def _initialize_pool():
     global _db_pool
-    config = load_config()
+    config = get_local_db_config()
     _db_pool = ThreadedConnectionPool(
         minconn=1, maxconn=10, host=config["host"], port=config["port"],
         database=config["database"], user=config["user"], password=config["password"],

@@ -12,11 +12,14 @@ if __package__:
         apply_query_timeout,
         db_error_response,
         get_db_connection,
+        get_agent_names,
         get_game_names,
         is_player_daily_summary_available,
         release_db_connection,
     )
+    from .daily_backfill import start_daily_backfill_scheduler
     from .security import configure_authentication
+    from .slot_parent_bet_sync import start_slot_parent_bet_sync
 else:
     from infrastructure import (
         CONFIG_PATH,
@@ -24,11 +27,14 @@ else:
         apply_query_timeout,
         db_error_response,
         get_db_connection,
+        get_agent_names,
         get_game_names,
         is_player_daily_summary_available,
         release_db_connection,
     )
+    from daily_backfill import start_daily_backfill_scheduler
     from security import configure_authentication
+    from slot_parent_bet_sync import start_slot_parent_bet_sync
 
 # 初始化 Flask 應用，設定靜態檔案目錄為專案的 web 資料夾
 app = Flask(__name__, static_folder=os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'web')))
@@ -203,7 +209,7 @@ def get_game_data():
         query += " ORDER BY date, slot_id"
         cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
-        game_names = get_game_names()
+        game_names = get_game_names(cursor)
         return jsonify([
             {
                 **row,
@@ -256,8 +262,12 @@ def get_game_ranking():
             GROUP BY slot_id
             ORDER BY total_spin_count DESC;
         """, (start_day, end_day))
-        game_names = get_game_names()
-        return jsonify([{**row, "game_name": game_names.get(str(row["slot_id"]), str(row["slot_id"]))} for row in cursor.fetchall()])
+        ranking_rows = cursor.fetchall()
+        game_names = get_game_names(cursor)
+        return jsonify([{
+            **row,
+            "game_name": game_names.get(str(row["slot_id"]), str(row["slot_id"]))
+        } for row in ranking_rows])
     except Exception as e:
         print(f"Failed to load game ranking ({start_date} ~ {end_date}): {e}", file=sys.stderr)
         return db_error_response(e)
@@ -279,9 +289,15 @@ def get_agent_options():
             ORDER BY parent_agent_id, agent_id;
         """)
         rows = cursor.fetchall()
+        agent_names = get_agent_names(cursor)
+        named_rows = [{
+            **row,
+            "parent_agent_name": agent_names.get(str(row["parent_agent_id"]), str(row["parent_agent_id"])),
+            "agent_name": agent_names.get(str(row["agent_id"]), str(row["agent_id"]))
+        } for row in rows]
         return jsonify({
             "parent_agents": sorted({row["parent_agent_id"] for row in rows}),
-            "agents": rows
+            "agents": named_rows
         })
     except Exception as e:
         print(f"Failed to load agent options: {e}", file=sys.stderr)
@@ -290,9 +306,31 @@ def get_agent_options():
         if conn:
             release_db_connection(conn)
 
+@app.route('/api/agent-dates', methods=['GET'])
+def get_agent_dates():
+    """Return the dates available in the local Agent retention snapshot."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        apply_query_timeout(cursor)
+        cursor.execute("""
+            SELECT DISTINCT date
+            FROM public.agent_daily_retention
+            WHERE date IS NOT NULL
+            ORDER BY date DESC;
+        """)
+        return jsonify([row[0].isoformat() for row in cursor.fetchall()])
+    except Exception as e:
+        print(f"Failed to load agent dates: {e}", file=sys.stderr)
+        return db_error_response(e)
+    finally:
+        if conn:
+            release_db_connection(conn)
+
 @app.route('/api/agent-analysis', methods=['GET'])
 def get_agent_analysis():
-    """Return game cube and daily details for the selected agent filters."""
+    """Return Agent totals and daily details from the local Agent snapshot."""
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     parent_agent_id = request.args.get('parent_agent_id', 'ALL')
@@ -339,7 +377,7 @@ def get_agent_analysis():
                 (3, bet_3_player_count, bet_3_spin_count, bet_3_total_bet_amount, bet_3_total_win_amount)
             ) AS bt(bet_type, player_count, spin_count, bet_amount, win_amount)
         """
-        detail_group = "date, slot_id, bt.bet_type"
+        detail_group = "date, parent_agent_id, agent_id, bt.bet_type"
     else:
         player_expr = f"bet_{bet_type}_player_count"
         spin_expr = f"bet_{bet_type}_spin_count"
@@ -351,7 +389,7 @@ def get_agent_analysis():
         detail_bet_expr = bet_expr
         detail_win_expr = win_expr
         detail_join = ""
-        detail_group = "date, slot_id"
+        detail_group = "date, parent_agent_id, agent_id"
 
     conn = None
     try:
@@ -359,39 +397,42 @@ def get_agent_analysis():
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         apply_query_timeout(cursor)
         cursor.execute(f"""
-            SELECT slot_id,
+            SELECT parent_agent_id, agent_id,
                    SUM({player_expr}) AS player_count,
                    SUM(dnu) AS dnu,
                    SUM({spin_expr}) AS spin_count,
                    SUM({bet_expr}) AS total_bet_amount,
                    SUM({win_expr}) AS total_win_amount,
                    SUM({bet_expr}) - SUM({win_expr}) AS ggr
-            FROM public.agent_daily_game_retention
+            FROM public.agent_daily_retention
             WHERE {where_clause}
-            GROUP BY slot_id
-            ORDER BY ggr DESC, slot_id;
+            GROUP BY parent_agent_id, agent_id
+            ORDER BY ggr DESC, parent_agent_id, agent_id;
         """, tuple(params))
         cube = cursor.fetchall()
         cursor.execute(f"""
-            SELECT date, slot_id, {detail_bet_type} AS bet_type,
+            SELECT date, parent_agent_id, agent_id, {detail_bet_type} AS bet_type,
                    SUM({detail_player_expr}) AS player_count,
                    SUM({detail_spin_expr}) AS spin_count,
                    SUM({detail_bet_expr}) AS total_bet_amount,
                    SUM({detail_win_expr}) AS total_win_amount,
                    SUM({detail_bet_expr}) - SUM({detail_win_expr}) AS ggr
-            FROM public.agent_daily_game_retention
+            FROM public.agent_daily_retention
             {detail_join}
             WHERE {where_clause}
             GROUP BY {detail_group}
-            ORDER BY date, slot_id, bet_type;
+            ORDER BY date, parent_agent_id, agent_id, bet_type;
         """, tuple(params))
         details = cursor.fetchall()
-        game_names = get_game_names()
+        agent_names = get_agent_names(cursor)
         def serialize(row):
             return {
                 **row,
                 "date": row["date"].isoformat() if row.get("date") else None,
-                "game_name": game_names.get(str(row["slot_id"]), str(row["slot_id"]))
+                "parent_agent_name": agent_names.get(
+                    str(row["parent_agent_id"]), str(row["parent_agent_id"])
+                ),
+                "agent_name": agent_names.get(str(row["agent_id"]), str(row["agent_id"]))
             }
         return jsonify({
             "cube": [serialize(row) for row in cube],
@@ -417,7 +458,12 @@ def get_home_dashboard():
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         apply_query_timeout(cursor)
 
-        cursor.execute("SELECT MAX(date) AS latest_date FROM public.casino_retention;")
+        cursor.execute("""
+            SELECT COALESCE(
+                (SELECT MAX(bet_at::date) FROM public.slot_parent_bet),
+                (SELECT MAX(date) FROM public.casino_retention)
+            ) AS latest_date;
+        """)
         latest_row = cursor.fetchone()
         latest_date = latest_row.get("latest_date") if latest_row else None
         if not latest_date:
@@ -435,6 +481,7 @@ def get_home_dashboard():
         )
         ggr_start = reference_date - timedelta(days=29)
         seven_day_start = reference_date - timedelta(days=6)
+        historical_end = reference_date - timedelta(days=1)
 
         cursor.execute("""
             SELECT
@@ -443,28 +490,34 @@ def get_home_dashboard():
                 COALESCE(SUM(total_win_amount) FILTER (WHERE date BETWEEN %s AND %s), 0) AS current_win,
                 COALESCE(SUM(total_spin_count) FILTER (WHERE date BETWEEN %s AND %s), 0) AS previous_spins,
                 COALESCE(SUM(total_bet_amount) FILTER (WHERE date BETWEEN %s AND %s), 0) AS previous_bet,
-                COALESCE(SUM(total_win_amount) FILTER (WHERE date BETWEEN %s AND %s), 0) AS previous_win,
-                COALESCE(SUM(total_spin_count) FILTER (WHERE date = %s), 0) AS today_spins,
-                COALESCE(SUM(total_bet_amount) FILTER (WHERE date = %s), 0) AS today_bet,
-                COALESCE(SUM(total_win_amount) FILTER (WHERE date = %s), 0) AS today_win
+                COALESCE(SUM(total_win_amount) FILTER (WHERE date BETWEEN %s AND %s), 0) AS previous_win
             FROM public.casino_retention
             WHERE date BETWEEN %s AND %s;
         """, (
-            current_month_start, reference_date,
-            current_month_start, reference_date,
-            current_month_start, reference_date,
+            current_month_start, historical_end,
+            current_month_start, historical_end,
+            current_month_start, historical_end,
             previous_month_start, previous_compare_end,
             previous_month_start, previous_compare_end,
             previous_month_start, previous_compare_end,
-            reference_date, reference_date, reference_date,
-            previous_month_start, reference_date
+            previous_month_start, historical_end
         ))
         totals = cursor.fetchone()
+        cursor.execute("""
+            SELECT
+                COUNT(*)::INT8 AS spin_count,
+                COALESCE(SUM(bet_amount), 0) AS total_bet_amount,
+                COALESCE(SUM(total_prize), 0) AS total_win_amount
+            FROM public.slot_parent_bet
+            WHERE bet_at >= %s AND bet_at < %s + 1;
+        """, (reference_date, reference_date))
+        raw_today = cursor.fetchone()
         current_month = {
-            "total_spin_count": totals["current_spins"],
-            "total_bet_amount": totals["current_bet"],
-            "total_win_amount": totals["current_win"],
-            "ggr": totals["current_bet"] - totals["current_win"]
+            "total_spin_count": totals["current_spins"] + raw_today["spin_count"],
+            "total_bet_amount": totals["current_bet"] + raw_today["total_bet_amount"],
+            "total_win_amount": totals["current_win"] + raw_today["total_win_amount"],
+            "ggr": (totals["current_bet"] + raw_today["total_bet_amount"])
+                   - (totals["current_win"] + raw_today["total_win_amount"])
         }
         previous_month = {
             "total_spin_count": totals["previous_spins"],
@@ -473,64 +526,73 @@ def get_home_dashboard():
             "ggr": totals["previous_bet"] - totals["previous_win"]
         }
         today = {
-            "total_spin_count": totals["today_spins"],
-            "total_bet_amount": totals["today_bet"],
-            "total_win_amount": totals["today_win"],
-            "ggr": totals["today_bet"] - totals["today_win"]
+            "total_spin_count": raw_today["spin_count"],
+            "total_bet_amount": raw_today["total_bet_amount"],
+            "total_win_amount": raw_today["total_win_amount"],
+            "ggr": raw_today["total_bet_amount"] - raw_today["total_win_amount"]
         }
         cursor.execute("""
             SELECT date, total_bet_amount - total_win_amount AS ggr
             FROM public.casino_retention
             WHERE date >= %s AND date <= %s
             ORDER BY date;
-        """, (ggr_start, reference_date))
+        """, (ggr_start, historical_end))
         ggr_30d = cursor.fetchall()
+        ggr_30d.append({
+            "date": reference_date,
+            "ggr": raw_today["total_bet_amount"] - raw_today["total_win_amount"]
+        })
 
         def load_game_rankings(start_day, end_day, limit):
             cursor.execute("""
+                WITH combined AS (
+                    SELECT slot_id, total_spin_count, total_bet_amount, total_win_amount
+                    FROM public.game_retention
+                    WHERE date >= %s AND date <= %s AND date <> %s
+                    UNION ALL
+                    SELECT slot_id, COUNT(*)::INT8,
+                           COALESCE(SUM(bet_amount), 0),
+                           COALESCE(SUM(total_prize), 0)
+                    FROM public.slot_parent_bet
+                    WHERE bet_at >= %s AND bet_at < %s + 1
+                      AND %s BETWEEN %s AND %s
+                    GROUP BY slot_id
+                )
                 SELECT slot_id, SUM(total_spin_count) AS total_spin_count,
                        SUM(total_bet_amount) AS total_bet_amount,
                        SUM(total_win_amount) AS total_win_amount,
                        SUM(total_bet_amount) - SUM(total_win_amount) AS ggr
-                FROM public.game_retention
-                WHERE date >= %s AND date <= %s
+                FROM combined
                 GROUP BY slot_id
                 ORDER BY total_spin_count DESC
                 LIMIT %s;
-            """, (start_day, end_day, limit))
-            game_names = get_game_names()
-            return [{**row, "game_name": game_names.get(str(row["slot_id"]), str(row["slot_id"]))} for row in cursor.fetchall()]
+            """, (
+                start_day, end_day, reference_date,
+                reference_date, reference_date,
+                reference_date, start_day, end_day, limit
+            ))
+            ranking_rows = cursor.fetchall()
+            game_names = get_game_names(cursor)
+            return [{
+                **row,
+                "game_name": game_names.get(str(row["slot_id"]), str(row["slot_id"]))
+            } for row in ranking_rows]
 
         def load_player_alerts(start_day, end_day, limit):
-            if is_player_daily_summary_available(cursor):
-                cursor.execute("""
-                    SELECT player_id, SUM(spin_count) AS spin_count,
-                           SUM(total_bet_amount) AS total_bet,
-                           SUM(total_prize) AS total_win,
-                           SUM(net_profit) AS profit
-                    FROM public.player_daily_summary
-                    WHERE play_date >= %s AND play_date <= %s
-                    GROUP BY player_id
-                    HAVING SUM(net_profit) > 0
-                    ORDER BY profit DESC
-                    LIMIT %s;
-                """, (start_day, end_day, limit))
-            else:
-                cursor.execute("""
-                    SELECT player_id,
-                           SUM(bet_1_spin_count + bet_2_spin_count + bet_3_spin_count) AS spin_count,
-                           SUM(total_bet_1_amount + total_bet_2_amount + total_bet_3_amount) AS total_bet,
-                           SUM(total_win_1_amount + total_win_2_amount + total_win_3_amount) AS total_win,
-                           SUM(total_win_1_amount + total_win_2_amount + total_win_3_amount)
-                             - SUM(total_bet_1_amount + total_bet_2_amount + total_bet_3_amount) AS profit
-                    FROM public.player_daily
-                    WHERE date >= %s AND date <= %s
-                    GROUP BY player_id
-                    HAVING SUM(total_win_1_amount + total_win_2_amount + total_win_3_amount)
-                             - SUM(total_bet_1_amount + total_bet_2_amount + total_bet_3_amount) > 0
-                    ORDER BY profit DESC
-                    LIMIT %s;
-                """, (start_day, end_day, limit))
+            cursor.execute("""
+                SELECT player_id, COUNT(*)::INT8 AS spin_count,
+                       COALESCE(SUM(bet_amount), 0) AS total_bet,
+                       COALESCE(SUM(total_prize), 0) AS total_win,
+                       COALESCE(SUM(total_prize), 0)
+                         - COALESCE(SUM(bet_amount), 0) AS profit
+                FROM public.slot_parent_bet
+                WHERE bet_at >= %s AND bet_at < %s + 1
+                GROUP BY player_id
+                HAVING COALESCE(SUM(total_prize), 0)
+                         - COALESCE(SUM(bet_amount), 0) > 0
+                ORDER BY profit DESC
+                LIMIT %s;
+            """, (start_day, end_day, limit))
             rows = cursor.fetchall()
             player_ids = [row["player_id"] for row in rows]
             if not player_ids:
@@ -554,17 +616,44 @@ def get_home_dashboard():
 
         def load_agent_performance(start_day, end_day):
             cursor.execute("""
+                WITH combined AS (
+                    SELECT parent_agent_id, agent_id,
+                           player_count, total_spin_count,
+                           total_bet_amount, total_win_amount
+                    FROM public.agent_daily_retention
+                    WHERE date BETWEEN %s AND %s AND date <> %s
+                    UNION ALL
+                    SELECT parent_agent_id, agent_id,
+                           COUNT(DISTINCT player_id)::INT8,
+                           COUNT(*)::INT8,
+                           COALESCE(SUM(bet_amount), 0),
+                           COALESCE(SUM(total_prize), 0)
+                    FROM public.slot_parent_bet
+                    WHERE bet_at >= %s AND bet_at < %s + 1
+                      AND %s BETWEEN %s AND %s
+                    GROUP BY parent_agent_id, agent_id
+                )
                 SELECT parent_agent_id, agent_id,
                        SUM(player_count) AS player_count,
+                       SUM(total_spin_count) AS total_spin_count,
                        SUM(total_bet_amount) AS total_bet_amount,
                        SUM(total_win_amount) AS total_win_amount,
                        SUM(total_bet_amount) - SUM(total_win_amount) AS ggr
-                FROM public.agent_daily_retention
-                WHERE date BETWEEN %s AND %s
+                FROM combined
                 GROUP BY parent_agent_id, agent_id
                 ORDER BY ggr DESC, parent_agent_id, agent_id;
-            """, (start_day, end_day))
-            return cursor.fetchall()
+            """, (
+                start_day, end_day, reference_date,
+                reference_date, reference_date,
+                reference_date, start_day, end_day
+            ))
+            rows = cursor.fetchall()
+            agent_names = get_agent_names(cursor)
+            return [{
+                **row,
+                "parent_agent_name": agent_names.get(str(row["parent_agent_id"]), str(row["parent_agent_id"])),
+                "agent_name": agent_names.get(str(row["agent_id"]), str(row["agent_id"]))
+            } for row in rows]
 
         agents_7d = load_agent_performance(seven_day_start, reference_date)
         agents_today = load_agent_performance(reference_date, reference_date)
@@ -859,7 +948,7 @@ def get_data():
             
         cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
-        game_names = get_game_names()
+        game_names = get_game_names(cursor)
         
         # 將 datetime 物件轉換為格式化字串以利 JSON 序列化
         for row in rows:
@@ -884,4 +973,6 @@ if __name__ == '__main__':
     print(" 正在啟動 API 與靜態伺服器：http://localhost:5000")
     print(f" 目前使用的資料庫設定檔：{CONFIG_PATH}")
     print("----------------------------------------------------------------")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    start_slot_parent_bet_sync()
+    start_daily_backfill_scheduler()
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
