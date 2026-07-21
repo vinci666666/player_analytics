@@ -27,22 +27,35 @@ let currentPlayersRequestController = null;
 let currentDataRequestController = null;
 let monthlyDataCache = [];
 let latestAvailableMonth = '';
+let lastLoadedMonthlyMonth = '';
 let gameDataCache = [];
+let gameHourlyPlayersCache = [];
 let monthlyGameRankingCache = [];
+let monthlyGameRankingRange = { startDate: '', endDate: '' };
 let monthlyRankingSort = { key: 'total_spin_count', direction: 'desc' };
 let gameSpinDistributionCache = [];
 let gameRankingCache = [];
 let gameRankingSort = { key: 'total_spin_count', direction: 'desc' };
 let gameRankingRequestId = 0;
 let gameLatestAvailableDate = '';
+let lastLoadedGameSingleDate = '';
 let homeDashboardCache = null;
 let agentOptionRows = [];
 let agentInitialized = false;
+let agentAnalysisCache = null;
+let agentGamePerformanceRequestId = 0;
 const UI_STATE_KEY = 'playerAnalytics.uiState.v1';
 let restoredUiState = null;
 let pendingGameSlot = '';
 let pendingPlayerId = '';
 let navigationToastTimer = null;
+let singlePlayerContext = null;
+let chartRenderFrame = null;
+let homeRefreshTimer = null;
+let homeDashboardRequest = null;
+let homeDashboardLoadedAt = 0;
+const HOME_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_CHART_POINTS = 4000;
 
 installAutoFitText('.metric-value', { minSize: 10 });
 
@@ -69,6 +82,7 @@ function saveUiState() {
       },
       game: {
         dateMode: gameDateModeSelect.value,
+        singleDate: gameSingleDate.value,
         startDate: gameStartDate.value,
         endDate: gameEndDate.value,
         slot: gameSlotSelect.value || pendingGameSlot || 'ALL'
@@ -76,7 +90,7 @@ function saveUiState() {
       agent: {
         parentAgentId: agentParentSelect.value,
         agentId: agentSelect.value,
-        betType: agentBetTypeSelect.value,
+        game: agentGameSelect.value,
         startDate: agentStartDate.value,
         endDate: agentEndDate.value
       },
@@ -122,10 +136,13 @@ const homeStatus = document.getElementById('home-status');
 const monthlyModeSelect = document.getElementById('monthly-mode-select');
 const monthlyMonthSelect = document.getElementById('monthly-month-select');
 const monthlySingleControls = document.getElementById('monthly-single-controls');
+const btnMonthlyPrevious = document.getElementById('btn-monthly-previous');
+const btnMonthlyNext = document.getElementById('btn-monthly-next');
 const monthlyCompareControls = document.getElementById('monthly-compare-controls');
 const monthlyStartMonth = document.getElementById('monthly-start-month');
 const monthlyEndMonth = document.getElementById('monthly-end-month');
 const monthlyBetTypePanel = document.getElementById('monthly-bet-type-panel');
+const monthlyDnuPanel = document.getElementById('monthly-dnu-panel');
 const monthlyRetention3Panel = document.getElementById('monthly-retention-3-panel');
 const monthlyRetention7Panel = document.getElementById('monthly-retention-7-panel');
 const btnLoadMonthly = document.getElementById('btn-load-monthly');
@@ -133,21 +150,41 @@ const monthlyStatus = document.getElementById('monthly-status');
 const gameContent = document.getElementById('game-analysis-content');
 const gameSlotSelect = document.getElementById('game-slot-select');
 const gameDateModeSelect = document.getElementById('game-date-mode-select');
+const gameSingleDateControls = document.getElementById('game-single-date-controls');
+const gameSingleDate = document.getElementById('game-single-date');
+const btnGamePreviousDay = document.getElementById('btn-game-previous-day');
+const btnGameNextDay = document.getElementById('btn-game-next-day');
 const gameCustomDateControls = document.getElementById('game-custom-date-controls');
 const gameStartDate = document.getElementById('game-start-date');
 const gameEndDate = document.getElementById('game-end-date');
 const btnLoadGame = document.getElementById('btn-load-game');
 const gameStatus = document.getElementById('game-status');
 const gameSpinDistributionPanel = document.getElementById('game-spin-distribution-panel');
+const gameDauDnuPanel = document.getElementById('game-dau-dnu-panel');
+const gameRtpPanel = document.getElementById('game-rtp-panel');
+const gameRetentionPanel = document.getElementById('game-retention-panel');
+const gameDailyBetPanel = document.getElementById('game-daily-bet-panel');
+const gameDailyBetBody = document.getElementById('game-daily-bet-body');
 const gameRankingPanel = document.getElementById('game-ranking-panel');
 const agentContent = document.getElementById('agent-analysis-content');
 const agentParentSelect = document.getElementById('agent-parent-select');
 const agentSelect = document.getElementById('agent-select');
-const agentBetTypeSelect = document.getElementById('agent-bet-type-select');
+const agentGameSelect = document.getElementById('agent-game-select');
+const agentGameLabel = document.getElementById('agent-label-game');
+const agentLabelAgent = document.getElementById('agent-label-agent');
 const agentStartDate = document.getElementById('agent-start-date');
 const agentEndDate = document.getElementById('agent-end-date');
 const btnLoadAgent = document.getElementById('btn-load-agent');
 const agentStatus = document.getElementById('agent-status');
+const singlePlayerContent = document.getElementById('single-player-analysis-content');
+const singlePlayerForm = document.getElementById('single-player-form');
+const singlePlayerName = document.getElementById('single-player-name');
+const singlePlayerStartDate = document.getElementById('single-player-start-date');
+const singlePlayerEndDate = document.getElementById('single-player-end-date');
+const singlePlayerSubmit = document.getElementById('btn-load-single-player');
+const singlePlayerStatus = document.getElementById('single-player-status');
+const globalDataLoading = document.getElementById('global-data-loading');
+const globalDataLoadingMessage = document.getElementById('global-data-loading-message');
 const navigationToast = document.getElementById('navigation-toast');
 const loginForm = document.getElementById('login-form');
 const loginPassword = document.getElementById('login-password');
@@ -156,11 +193,12 @@ const loginError = document.getElementById('login-error');
 const btnLogout = document.getElementById('btn-logout');
 const originalFetch = window.fetch.bind(window);
 let dashboardInitialized = false;
+let activeDataRequestCount = 0;
 
 pageNavItems.forEach((item) => {
   item.addEventListener('click', (event) => {
     const page = item.dataset.page;
-    if (page === 'home' || page === 'monthly' || page === 'game' || page === 'agent') {
+    if (page === 'home' || page === 'monthly' || page === 'game' || page === 'agent' || page === 'single-player') {
       event.preventDefault();
       setActivePage(page);
     } else if (page === 'player') {
@@ -188,6 +226,7 @@ const metricFreeGames = document.getElementById('metric-free-games');
 
 // 數據明細表格本體
 const tableBody = document.getElementById('table-body');
+const gameWagerSummaryBody = document.getElementById('game-wager-summary-body');
 
 // ----------------------------------------------------
 // 本地語系化字典 (i18n)
@@ -238,9 +277,12 @@ const translations = {
     statSwitches: "Game Switches",
     statFree: "Free Game Spins",
     tabTable: "📊 Betting Sequence Details",
+    gameWagerSummaryTitle: "Game Wager Records",
+    gameWagerGame: "Game",
+    gameWagerType: "Wager Type",
     thSeq: "Sequence",
     thPlayer: "Player ID",
-    thTime: "Timestamp (bet_at)",
+    thTime: "Timestamp (bet_at_utc7)",
     thSlot: "Game Name",
     thBetType: "Wager Type",
     betTypeNormal: "Normal Bet",
@@ -263,6 +305,7 @@ const translations = {
     chartXAxis: "Play Sequence Number (play_seq)",
     chartYAxis: "Cumulative Profit (IDR)",
     chartLegendProfit: "Cumulative Daily Profit",
+    chartLegendBet: "Wager Amount",
     chartLegendFg: "Free Game Feature",
     chartLegendGs: "Game Switch",
     tooltipSeq: "Play Sequence",
@@ -281,11 +324,25 @@ const translations = {
     monthlyEyebrow: "MONTHLY OPERATIONS",
     gameEyebrow: "GAME PERFORMANCE",
     agentEyebrow: "AGENT ANALYSIS",
+    navSinglePlayer: "Single Player Analysis",
     navHome: "Operations Overview",
     navMonthly: "Monthly Operations",
     navGame: "Game Performance",
     navAgent: "Agent Analysis",
     navPlayer: "Player Behavior",
+    singlePlayerEyebrow: "PLAYER LOOKUP",
+    singlePlayerTitle: "Single Player Analysis",
+    singlePlayerDescription: "Enter a player name and date range to view betting trends and individual wager details.",
+    singlePlayerName: "Player Name",
+    singlePlayerNamePlaceholder: "Enter the full player name",
+    singlePlayerStart: "Start Date",
+    singlePlayerEnd: "End Date",
+    singlePlayerSubmit: "Analyze Player",
+    singlePlayerLoading: "Loading player betting records…",
+    singlePlayerQuerying: "Querying…",
+    singlePlayerLoaded: "Loaded {count} wagers for {name} from {start} to {end}.",
+    singlePlayerNoData: "No wagers were found for this player in the selected period.",
+    singlePlayerNameRequired: "Enter a player name.",
     homeEyebrow: "OPERATIONS OVERVIEW",
     homeTitle: "Operations Overview",
     homeDescription: "Monitor operating performance, game rankings, and high-profit player alerts",
@@ -301,7 +358,8 @@ const translations = {
     homeSevenDayTop10: "Last 7 Days · Top 10",
     homeCurrentDayTop5: "Current Day · Top 5",
     homeComparedPrevious: "vs. previous month {value}%",
-    homeGgr30d: "30-Day GGR Trend",
+    homeGgr30d: "30-Day GGR & DAU Trend",
+    homeHourlySpins: "Hourly Spins · Latest 24 Hours",
     homeProfit: "Player Profit",
     homeLoading: "Loading operations overview…",
     homeLoadError: "Failed to load operations overview: {message}",
@@ -319,6 +377,8 @@ const translations = {
     monthlyModeQuarter: "Quarter Analysis",
     monthlyModeHalfYear: "Half-Year Analysis",
     monthlyModeYear: "Year Analysis",
+    previousMonth: "Previous Month",
+    nextMonth: "Next Month",
     labelStartMonth: "Start Month",
     labelEndMonth: "End Month",
     monthlyRangeOrderError: "Start month must be before or equal to end month.",
@@ -326,8 +386,13 @@ const translations = {
     labelGame: "Game",
     labelGameDateMode: "Date Range",
     gameDateToday: "Today",
+    gameDateYesterday: "Yesterday",
+    gameDateSingleDay: "Select One Day",
     gameDateSevenDays: "Last 7 Days (including today)",
     gameDateCustom: "Custom Range",
+    previousDay: "Previous Day",
+    nextDay: "Next Day",
+    labelGameSingleDate: "Analysis Date",
     allGames: "All Games",
     loadMonthly: "Run Monthly Analysis",
     loadGame: "Run Game Analysis",
@@ -341,14 +406,17 @@ const translations = {
     dataDays: "Data Days",
     monthlyLoading: "Loading monthly analysis…",
     monthlyNoData: "No monthly analysis data for the selected dates.",
+    monthlyMonthNoData: "No data is available for {month}. The previously selected month will be kept.",
     monthlyLoaded: "Loaded {days} days from {start} to {end}.",
     monthlyDateError: "Unable to load available dates. Please select dates manually.",
     monthlyLoadError: "Failed to load monthly analysis: {message}",
     gameLoading: "Loading game analysis…",
     gameNoData: "No game analysis data for the selected dates.",
+    gameDayNoData: "No data is available for {date}. The previously selected date will be kept.",
     gameLoaded: "Loaded game data from {start} to {end}.",
     gameDateError: "Unable to load available dates. Please select dates manually.",
     gameLoadError: "Failed to load game analysis: {message}",
+    gameMedianLoadError: "Median line could not be loaded: {message}. Restart the Flask server if it is still running old code.",
     agentLoading: "Loading agent analysis…",
     agentLoaded: "Agent analysis loaded.",
     agentNoData: "No agent data for the selected filters.",
@@ -366,10 +434,24 @@ const translations = {
     chartGameSpinShare: "Total Spin Share by Game",
     otherGames: "Other",
     chartGameSpinDistribution: "Daily Player Spin Distribution",
+    chartMedianPlayerSpins: "Median Player Spins",
     chartGameGgr: "Daily Game GGR",
+    chartGameGgrByGame: "Game GGR for the Day",
+    chartGameDauDnu: "Daily Active & New Players by Game (DAU / DNU)",
     chartGameRtp: "Game RTP Trend",
     chartGameRetention: "Game Retention Trend",
     chartGameBetTypePlayers: "Game Bet Type Player Count",
+    chartGameHourlyBetTypePlayers: "Hourly Players by Game Bet Type",
+    chartGameHourlyBetTypePlayersAverage: "Average Hourly Players by Game Bet Type",
+    gameDailyBetTitle: "Daily Bet Statistics for Selected Game",
+    gameDailyBetDate: "Date",
+    gameDailyBetType: "Bet Type",
+    gameDailyBetPlayers: "Players",
+    gameDailyBetSpins: "Spins",
+    gameDailyBetAmount: "Wagered (IDR)",
+    gameDailyWinAmount: "Payout (IDR)",
+    gameDailyBetRtp: "RTP",
+    gameDailyBetGgr: "GGR (IDR)",
     axisPlayers: "Players",
     axisRtp: "RTP (%)",
     axisRetention: "Retention (%)",
@@ -391,6 +473,7 @@ const translations = {
     dateOrderError: "Start date must be before or equal to End date",
     rangeLimitError: "Time interval must be within one month",
     loading: "Loading...",
+    globalDataLoading: "Searching for or loading data…",
     noPlayers: "(No players match filters)",
     playerOption: "Player ID: {player}",
     loadFailed: "Load failed: {message}",
@@ -450,9 +533,12 @@ const translations = {
     statSwitches: "遊戲切換次數",
     statFree: "免費遊戲次數",
     tabTable: "📊 投注序列明細",
+    gameWagerSummaryTitle: "遊戲投注紀錄",
+    gameWagerGame: "遊戲",
+    gameWagerType: "投注方式",
     thSeq: "投注序號",
     thPlayer: "玩家 ID",
-    thTime: "時間戳記 (bet_at)",
+    thTime: "時間戳記 (bet_at_utc7)",
     thSlot: "遊戲名稱",
     thBetType: "投注方式",
     betTypeNormal: "Normal Bet",
@@ -475,6 +561,7 @@ const translations = {
     chartXAxis: "投注序列號 (play_seq)",
     chartYAxis: "累計利潤 (IDR)",
     chartLegendProfit: "累計每日利潤",
+    chartLegendBet: "每筆押注金額",
     chartLegendFg: "免費遊戲特色",
     chartLegendGs: "切換遊戲",
     tooltipSeq: "投注序列",
@@ -493,11 +580,25 @@ const translations = {
     monthlyEyebrow: "月度營運",
     gameEyebrow: "遊戲績效",
     agentEyebrow: "AGENT 分析",
+    navSinglePlayer: "單獨玩家分析",
     navHome: "營運總覽",
     navMonthly: "月度營運分析",
     navGame: "遊戲績效分析",
     navAgent: "Agent 分析",
     navPlayer: "玩家行為分析",
+    singlePlayerEyebrow: "單一玩家查詢",
+    singlePlayerTitle: "單獨玩家分析",
+    singlePlayerDescription: "輸入玩家名稱與時間範圍，查看押注趨勢與每筆押注明細。",
+    singlePlayerName: "玩家名稱",
+    singlePlayerNamePlaceholder: "輸入完整玩家名稱",
+    singlePlayerStart: "開始日期",
+    singlePlayerEnd: "結束日期",
+    singlePlayerSubmit: "查詢玩家",
+    singlePlayerLoading: "正在載入玩家押注紀錄…",
+    singlePlayerQuerying: "查詢中…",
+    singlePlayerLoaded: "已載入 {name} 於 {start} 至 {end} 的 {count} 筆押注。",
+    singlePlayerNoData: "此玩家在所選期間沒有押注紀錄。",
+    singlePlayerNameRequired: "請輸入玩家名稱。",
     homeEyebrow: "營運總覽",
     homeTitle: "營運總覽",
     homeDescription: "即時掌握營運績效、遊戲排行與高獲利玩家警示",
@@ -513,7 +614,8 @@ const translations = {
     homeSevenDayTop10: "近 7 日 · Top 10",
     homeCurrentDayTop5: "當日 · Top 5",
     homeComparedPrevious: "較上月 {value}%",
-    homeGgr30d: "近 30 日 GGR 趨勢",
+    homeGgr30d: "近 30 日 GGR 與 DAU 趨勢",
+    homeHourlySpins: "近 24 小時每小時 Spin 數",
     homeProfit: "玩家獲利",
     homeLoading: "正在載入營運總覽…",
     homeLoadError: "營運總覽載入失敗：{message}",
@@ -531,6 +633,8 @@ const translations = {
     monthlyModeQuarter: "季分析",
     monthlyModeHalfYear: "半年分析",
     monthlyModeYear: "年分析",
+    previousMonth: "前一個月",
+    nextMonth: "下一個月",
     labelStartMonth: "開始月份",
     labelEndMonth: "結束月份",
     monthlyRangeOrderError: "開始月份必須早於或等於結束月份。",
@@ -538,8 +642,13 @@ const translations = {
     labelGame: "遊戲",
     labelGameDateMode: "時間範圍",
     gameDateToday: "今日",
+    gameDateYesterday: "昨日",
+    gameDateSingleDay: "指定單日",
     gameDateSevenDays: "近 7 日（包含今日）",
     gameDateCustom: "任意範圍",
+    previousDay: "前一日",
+    nextDay: "後一日",
+    labelGameSingleDate: "分析日期",
     allGames: "全部遊戲",
     loadMonthly: "執行月度分析",
     loadGame: "執行遊戲分析",
@@ -553,14 +662,17 @@ const translations = {
     dataDays: "資料天數",
     monthlyLoading: "正在載入月度營運資料…",
     monthlyNoData: "所選期間沒有月度營運資料。",
+    monthlyMonthNoData: "{month} 沒有資料，將保留原本選擇的月份。",
     monthlyLoaded: "已載入 {start} 至 {end} 的 {days} 天資料。",
     monthlyDateError: "無法取得可用日期，請手動選擇日期。",
     monthlyLoadError: "月度營運分析載入失敗：{message}",
     gameLoading: "正在載入遊戲績效資料…",
     gameNoData: "所選期間沒有遊戲績效資料。",
+    gameDayNoData: "{date} 沒有資料，將保留原本選擇的日期。",
     gameLoaded: "已載入 {start} 至 {end} 的遊戲資料。",
     gameDateError: "無法取得可用日期，請手動選擇日期。",
     gameLoadError: "遊戲績效分析載入失敗：{message}",
+    gameMedianLoadError: "中位數折線載入失敗：{message}。若 Flask 尚未重啟，請先重新啟動伺服器。",
     agentLoading: "正在載入 Agent 分析…",
     agentLoaded: "Agent 分析已載入。",
     agentNoData: "所選條件沒有 Agent 資料。",
@@ -578,10 +690,24 @@ const translations = {
     chartGameSpinShare: "所有遊戲 Total Spin 分布",
     otherGames: "其他",
     chartGameSpinDistribution: "每日玩家 Spin 量分布",
+    chartMedianPlayerSpins: "玩家 Spin 中位數",
     chartGameGgr: "遊戲每日 GGR",
+    chartGameGgrByGame: "當日各遊戲 GGR",
+    chartGameDauDnu: "遊戲每日活躍與新增玩家（DAU / DNU）",
     chartGameRtp: "遊戲 RTP 趨勢",
     chartGameRetention: "遊戲 Retention 趨勢",
     chartGameBetTypePlayers: "遊戲 Bet Type 玩家數",
+    chartGameHourlyBetTypePlayers: "遊戲 Bet Type 每小時玩家數",
+    chartGameHourlyBetTypePlayersAverage: "遊戲 Bet Type 每小時平均玩家數",
+    gameDailyBetTitle: "單一遊戲每日 Bet 統計",
+    gameDailyBetDate: "日期",
+    gameDailyBetType: "Bet 類型",
+    gameDailyBetPlayers: "玩家數",
+    gameDailyBetSpins: "Spin 數",
+    gameDailyBetAmount: "投注額（IDR）",
+    gameDailyWinAmount: "派彩額（IDR）",
+    gameDailyBetRtp: "RTP",
+    gameDailyBetGgr: "GGR（IDR）",
     axisPlayers: "玩家數",
     axisRtp: "RTP (%)",
     axisRetention: "Retention (%)",
@@ -603,6 +729,7 @@ const translations = {
     dateOrderError: "開始日期必須小於或等於結束日期",
     rangeLimitError: "時間區間不可超過一個月",
     loading: "載入中...",
+    globalDataLoading: "正在搜尋或載入資料…",
     noPlayers: "(此條件下查無玩家)",
     playerOption: "玩家 ID: {player}",
     loadFailed: "載入失敗：{message}",
@@ -622,6 +749,7 @@ const translations = {
 function updateLanguageUI() {
   // 依據當前語系設定更新網頁上的所有文字欄位
   const lang = translations[currentLang];
+  globalDataLoadingMessage.textContent = lang.globalDataLoading;
   document.title = currentLang === 'zh' ? 'iGaming 營運分析平台' : 'iGaming Operations Analytics Platform';
   document.getElementById('login-title').textContent = lang.loginTitle;
   document.getElementById('login-description').textContent = lang.loginDescription;
@@ -643,7 +771,16 @@ function updateLanguageUI() {
   document.getElementById('page-nav-monthly').textContent = lang.navMonthly;
   document.getElementById('page-nav-game').textContent = lang.navGame;
   document.getElementById('page-nav-agent').textContent = lang.navAgent;
+  document.getElementById('page-nav-single-player').textContent = lang.navSinglePlayer;
   document.getElementById('page-nav-player').textContent = lang.navPlayer;
+  document.getElementById('single-player-eyebrow').textContent = lang.singlePlayerEyebrow;
+  document.getElementById('single-player-page-title').textContent = lang.singlePlayerTitle;
+  document.getElementById('single-player-page-description').textContent = lang.singlePlayerDescription;
+  document.getElementById('single-player-name-label').textContent = lang.singlePlayerName;
+  singlePlayerName.placeholder = lang.singlePlayerNamePlaceholder;
+  document.getElementById('single-player-start-label').textContent = lang.singlePlayerStart;
+  document.getElementById('single-player-end-label').textContent = lang.singlePlayerEnd;
+  if (!singlePlayerSubmit.disabled) singlePlayerSubmit.textContent = lang.singlePlayerSubmit;
 
   document.getElementById('home-eyebrow').textContent = lang.homeEyebrow;
   document.getElementById('home-page-title').textContent = lang.homeTitle;
@@ -681,6 +818,8 @@ function updateLanguageUI() {
   document.getElementById('monthly-mode-quarter-option').textContent = lang.monthlyModeQuarter;
   document.getElementById('monthly-mode-half-year-option').textContent = lang.monthlyModeHalfYear;
   document.getElementById('monthly-mode-year-option').textContent = lang.monthlyModeYear;
+  btnMonthlyPrevious.textContent = lang.previousMonth;
+  btnMonthlyNext.textContent = lang.nextMonth;
   document.getElementById('monthly-label-month').textContent = ['quarter', 'half-year', 'year'].includes(monthlyModeSelect.value)
     ? lang.labelPeriodEndMonth : lang.labelAnalysisMonth;
   document.getElementById('monthly-label-start-month').textContent = lang.labelStartMonth;
@@ -720,8 +859,13 @@ function updateLanguageUI() {
   document.getElementById('game-label-slot').textContent = lang.labelGame;
   document.getElementById('game-label-date-mode').textContent = lang.labelGameDateMode;
   document.getElementById('game-date-mode-today').textContent = lang.gameDateToday;
+  document.getElementById('game-date-mode-yesterday').textContent = lang.gameDateYesterday;
+  document.getElementById('game-date-mode-single-day').textContent = lang.gameDateSingleDay;
   document.getElementById('game-date-mode-seven-days').textContent = lang.gameDateSevenDays;
   document.getElementById('game-date-mode-custom').textContent = lang.gameDateCustom;
+  btnGamePreviousDay.textContent = lang.previousDay;
+  btnGameNextDay.textContent = lang.nextDay;
+  document.getElementById('game-label-single-date').textContent = lang.labelGameSingleDate;
   document.getElementById('game-label-start-date').textContent = lang.labelStartDate;
   document.getElementById('game-label-end-date').textContent = lang.labelEndDate;
   btnLoadGame.textContent = lang.loadGame;
@@ -733,6 +877,15 @@ function updateLanguageUI() {
   document.getElementById('game-label-total-win').textContent = lang.totalWin;
   document.getElementById('game-label-total-ggr').textContent = lang.totalGgr;
   document.getElementById('game-label-days').textContent = lang.dataDays;
+  document.getElementById('game-daily-bet-title').textContent = lang.gameDailyBetTitle;
+  document.getElementById('game-daily-bet-date').textContent = lang.gameDailyBetDate;
+  document.getElementById('game-daily-bet-type').textContent = lang.gameDailyBetType;
+  document.getElementById('game-daily-bet-players').textContent = lang.gameDailyBetPlayers;
+  document.getElementById('game-daily-bet-spins').textContent = lang.gameDailyBetSpins;
+  document.getElementById('game-daily-bet-amount').textContent = lang.gameDailyBetAmount;
+  document.getElementById('game-daily-win-amount').textContent = lang.gameDailyWinAmount;
+  document.getElementById('game-daily-bet-rtp').textContent = lang.gameDailyBetRtp;
+  document.getElementById('game-daily-bet-ggr').textContent = lang.gameDailyBetGgr;
   Array.from(gameSlotSelect.options).forEach(option => {
     option.textContent = option.value === 'ALL'
       ? lang.allGames
@@ -787,6 +940,9 @@ function updateLanguageUI() {
   
   // 數據明細面板標題
   document.getElementById('table-panel-title').textContent = lang.tabTable;
+  document.getElementById('game-wager-summary-title').textContent = lang.gameWagerSummaryTitle;
+  document.getElementById('game-wager-th-game').textContent = lang.gameWagerGame;
+  document.getElementById('game-wager-th-type').textContent = lang.gameWagerType;
   
   // 數據表表頭
   document.getElementById('th-seq').textContent = lang.thSeq;
@@ -811,10 +967,12 @@ function updateLanguageUI() {
     else renderMonthlyCharts(monthlyDataCache);
   }
   if (monthlyGameRankingCache.length) renderMonthlyGameRanking();
-  if (gameDataCache.length) renderGameCharts(gameDataCache, gameSlotSelect.value || 'ALL');
+  if (gameDataCache.length) renderGameCharts(gameDataCache, gameSlotSelect.value || 'ALL', gameHourlyPlayersCache);
+  if (gameDataCache.length) renderGameDailyBetStats(gameDataCache, gameSlotSelect.value || 'ALL');
   if (gameSpinDistributionCache.length && gameSlotSelect.value !== 'ALL') renderGameSpinDistribution(gameSpinDistributionCache);
   if (gameRankingCache.length && gameSlotSelect.value === 'ALL') renderGameRanking();
   if (homeDashboardCache) renderHomeDashboard(homeDashboardCache);
+  if (agentAnalysisCache) renderAgentAnalysis(agentAnalysisCache);
 }
 
 // ----------------------------------------------------
@@ -1121,29 +1279,29 @@ function loadPlayersForDate(startDate, endDate) {
 
 function repopulatePlayerDropdown(startDate, endDate, selectPlayerId = null) {
   // 重新將 activePlayersList 快取的資料填入玩家下拉選單中
-  playerSelect.innerHTML = '';
-  
   if (activePlayersList.length === 0) {
     const opt = document.createElement('option');
     opt.value = "";
     opt.textContent = translations[currentLang].noPlayers;
-    playerSelect.appendChild(opt);
+    playerSelect.replaceChildren(opt);
     resetDashboardState();
     return;
   }
 
+  const options = document.createDocumentFragment();
   const placeholderOpt = document.createElement('option');
   placeholderOpt.value = "";
   placeholderOpt.id = "opt-placeholder-player";
   placeholderOpt.textContent = translations[currentLang].placeholderSelectPlayer;
-  playerSelect.appendChild(placeholderOpt);
+  options.appendChild(placeholderOpt);
   
   activePlayersList.forEach(p => {
     const opt = document.createElement('option');
     opt.value = p;
     opt.textContent = translations[currentLang].playerOption.replace('{player}', p);
-    playerSelect.appendChild(opt);
+    options.appendChild(opt);
   });
+  playerSelect.replaceChildren(options);
   
   // 保留或預設選擇指定玩家 ID
   if (selectPlayerId && activePlayersList.includes(String(selectPlayerId))) {
@@ -1218,6 +1376,73 @@ function loadAnalyzedData(startDate, endDate, player_id) {
     });
 }
 
+async function loadSinglePlayerData(playerId = '') {
+  const lang = translations[currentLang];
+  const playerName = singlePlayerName.value.trim();
+  const startDate = singlePlayerStartDate.value;
+  const endDate = singlePlayerEndDate.value;
+  if (!playerName) {
+    singlePlayerStatus.textContent = lang.singlePlayerNameRequired;
+    singlePlayerName.focus();
+    return;
+  }
+  if (!startDate || !endDate || startDate > endDate) {
+    singlePlayerStatus.textContent = lang.dateOrderError;
+    return;
+  }
+
+  singlePlayerSubmit.disabled = true;
+  singlePlayerSubmit.textContent = lang.singlePlayerQuerying;
+  singlePlayerContent.classList.add('is-loading');
+  singlePlayerContent.setAttribute('aria-busy', 'true');
+  singlePlayerStatus.textContent = lang.singlePlayerLoading;
+  tableBody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:2rem;color:var(--text-secondary);">${lang.singlePlayerLoading}</td></tr>`;
+  const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
+  if (playerId) {
+    params.set('player_id', String(playerId));
+    params.set('max_spins', String(Number.MAX_SAFE_INTEGER));
+  } else {
+    params.set('player_name', playerName);
+  }
+  try {
+    const response = await fetch(`/api/data?${params}`);
+    const records = await response.json();
+    if (!response.ok) throw new Error(records.error || lang.serverError);
+    if (!records.length) {
+      singlePlayerContext = null;
+      resetDashboardState();
+      singlePlayerStatus.textContent = lang.singlePlayerNoData;
+      return;
+    }
+    singlePlayerContext = {
+      name: records[0].player_username || playerName,
+      playerId: String(records[0].player_id),
+      startDate,
+      endDate
+    };
+    processAndRender(records);
+    singlePlayerStatus.textContent = lang.singlePlayerLoaded
+      .replace('{name}', singlePlayerContext.name)
+      .replace('{start}', startDate)
+      .replace('{end}', endDate)
+      .replace('{count}', records.length);
+  } catch (error) {
+    singlePlayerContext = null;
+    resetDashboardState();
+    singlePlayerStatus.textContent = lang.loadFailed.replace('{message}', error.message);
+  } finally {
+    singlePlayerContent.classList.remove('is-loading');
+    singlePlayerContent.removeAttribute('aria-busy');
+    singlePlayerSubmit.disabled = false;
+    singlePlayerSubmit.textContent = lang.singlePlayerSubmit;
+  }
+}
+
+singlePlayerForm.addEventListener('submit', event => {
+  event.preventDefault();
+  loadSinglePlayerData();
+});
+
 // ----------------------------------------------------
 // 前端即時分析、運算與渲染
 // ----------------------------------------------------
@@ -1259,8 +1484,9 @@ function processAndRender(records) {
     return {
       play_seq: state.playSeq,
       player_id: playerId,
-      bet_at: new Date(record.bet_at),
+      bet_at_utc7: new Date(record.bet_at_utc7),
       slot_id: slotId,
+      game_name: record.game_name,
       bet_type: record.bet_type,
       is_game_changed: is_game_changed,
       has_free_game: Boolean(record.has_free_game),
@@ -1283,14 +1509,12 @@ function renderDashboard() {
   // 將計算後的分析數據更新至前端看板指標與結果表格，並呼叫 Plotly 繪圖
   if (analyzedData.length === 0) return;
   
-  const player = playerSelect.value;
+  const singleMode = document.querySelector('main').classList.contains('single-player-page') && singlePlayerContext;
+  const player = singleMode ? `${singlePlayerContext.name} (ID ${singlePlayerContext.playerId})` : playerSelect.value;
   const mode = dateModeSelect.value;
-  let dateText = '';
-  if (mode === 'single') {
-    dateText = dateSelect.value;
-  } else {
-    dateText = `${dateStartSelect.value} ~ ${dateEndSelect.value}`;
-  }
+  const dateText = singleMode
+    ? `${singlePlayerContext.startDate} ~ ${singlePlayerContext.endDate}`
+    : (mode === 'single' ? dateSelect.value : `${dateStartSelect.value} ~ ${dateEndSelect.value}`);
   
   const lang = translations[currentLang];
   
@@ -1333,6 +1557,7 @@ function renderDashboard() {
   
   metricGameSwitches.textContent = gameSwitches;
   metricFreeGames.textContent = freeGames;
+  renderGameWagerSummary(analyzedData, lang);
   
   // 清空數據表格並逐列渲染填入明細 (限制最高 5,000 筆以防 DOM 凍結)
   tableBody.innerHTML = '';
@@ -1354,7 +1579,7 @@ function renderDashboard() {
     // 淨利數值與正負顏色 class 決定
     const spinNet = row.net_profit;
     const netClass = spinNet > 0 ? 'color: var(--success);' : (spinNet < 0 ? 'color: var(--danger);' : '');
-    const timestampStr = formatDateTimeForTooltip(row.bet_at);
+    const timestampStr = formatDateTimeForTooltip(row.bet_at_utc7);
     
     // 投注類型代碼映射為文字字串
     let betTypeStr = '--';
@@ -1402,13 +1627,61 @@ function renderDashboard() {
   
   tableBody.innerHTML = htmlRuns.join('');
   
-  // 渲染 Plotly 圖表
-  renderPlotlyChart(analyzedData, player, dateText);
+  // 將圖表工作排到下一個畫面更新，先讓表格與查詢狀態完成繪製。
+  if (chartRenderFrame !== null) cancelAnimationFrame(chartRenderFrame);
+  chartRenderFrame = requestAnimationFrame(() => {
+    chartRenderFrame = null;
+  renderPlotlyChart(getOptimizedChartData(analyzedData), player, dateText);
+  });
+}
+
+function renderGameWagerSummary(rows, lang) {
+  const groups = new Map();
+  rows.forEach(row => {
+    const gameName = formatGameNameOnly(row.slot_id, row.game_name);
+    const betType = getBetTypeLabel(row.bet_type, lang);
+    const key = `${gameName}\u0000${betType}`;
+    const group = groups.get(key) || { gameName, betType, spins: 0, bet: 0, win: 0 };
+    group.spins += 1;
+    group.bet += row.bet_amount;
+    group.win += row.total_prize;
+    groups.set(key, group);
+  });
+
+  const summaryRows = [...groups.values()].sort((a, b) =>
+    b.spins - a.spins || a.gameName.localeCompare(b.gameName)
+  );
+  gameWagerSummaryBody.innerHTML = summaryRows.map(group => `
+    <tr>
+      <td>${escapeHtml(group.gameName)}</td>
+      <td>${escapeHtml(group.betType)}</td>
+      <td>${formatCount(group.spins)}</td>
+      <td>${formatCount(group.bet)}</td>
+      <td>${formatCount(group.win)}</td>
+    </tr>
+  `).join('');
+}
+
+function getOptimizedChartData(rows) {
+  if (rows.length <= MAX_CHART_POINTS) return rows;
+  const selected = new Map();
+  const stride = Math.ceil(rows.length / MAX_CHART_POINTS);
+  selected.set(0, rows[0]);
+  for (let index = stride; index < rows.length - 1; index += stride) {
+    selected.set(index, rows[index]);
+  }
+  // 保留重要事件點，避免抽樣後遺失免費遊戲或遊戲切換標記。
+  rows.forEach((row, index) => {
+    if (row.has_free_game || row.is_game_changed) selected.set(index, row);
+  });
+  selected.set(rows.length - 1, rows[rows.length - 1]);
+  return [...selected.entries()].sort((a, b) => a[0] - b[0]).map(entry => entry[1]);
 }
 
 function renderPlotlyChart(chartData, player, date) {
   // 使用 Plotly.js 對分析後的數據點進行渲染，包含 Tooltips 進階顯示
   const lang = translations[currentLang];
+  const isSinglePlayerChart = document.querySelector('main').classList.contains('single-player-page');
   const hoverTemplate = 
     `<b>Player ID:</b> %{customdata[6]}<br>` +
     `<b>${lang.tooltipSeq}:</b> #%{x}<br>` +
@@ -1463,7 +1736,7 @@ function renderPlotlyChart(chartData, player, date) {
       color: getBetTypeColor(segment.betType)
     },
     hovertemplate: hoverTemplate,
-    type: 'scatter'
+    type: 'scattergl'
   }));
 
   // 2. 設置免費遊戲標記點 Trace (has_free_game = True)
@@ -1487,7 +1760,7 @@ function renderPlotlyChart(chartData, player, date) {
       `${lang.tooltipSeq}: #%{x}<br>` +
       `${lang.tooltipCumShort}: %{y:,.0f} IDR<br>` +
       "<extra></extra>",
-    type: 'scatter'
+    type: 'scattergl'
   };
 
   // 3. 設置切換遊戲標記點 Trace (is_game_changed = True)
@@ -1513,7 +1786,7 @@ function renderPlotlyChart(chartData, player, date) {
       `${lang.tooltipCumShort}: %{y:,.0f} IDR<br>` +
       "<extra></extra>",
     text: gsDataset.map(r => r.slot_id),
-    type: 'scatter'
+    type: 'scattergl'
   };
 
   // 圖表版面與樣式細部設定（對齊淺色玻璃擬態面板風格）
@@ -1545,6 +1818,18 @@ function renderPlotlyChart(chartData, player, date) {
       zerolinecolor: 'rgba(15,23,42,0.16)',
       tickformat: ',' // 大金額格式化
     },
+    ...(isSinglePlayerChart ? {
+      yaxis2: {
+        title: lang.chartLegendBet,
+        overlaying: 'y',
+        side: 'right',
+        rangemode: 'tozero',
+        showgrid: false,
+        tickformat: ',',
+        tickfont: { color: '#94a3b8' },
+        titlefont: { color: '#94a3b8' }
+      }
+    } : {}),
     legend: {
       font: { color: '#475569' },
       bgcolor: 'rgba(255, 255, 255, 0.95)',
@@ -1561,16 +1846,30 @@ function renderPlotlyChart(chartData, player, date) {
     modeBarButtonsToRemove: ['select2d', 'lasso2d', 'toggleSpikelines']
   };
 
-  const dataTraces = [...profitTraces];
+  const wagerTrace = {
+    x: chartData.map(row => row.play_seq),
+    y: chartData.map(row => row.bet_amount),
+    name: lang.chartLegendBet,
+    type: 'bar',
+    yaxis: 'y2',
+    marker: { color: 'rgba(148, 163, 184, 0.28)' },
+    hovertemplate: `<b>${lang.tooltipSeq}:</b> #%{x}<br><b>${lang.tooltipBet}:</b> %{y:,.0f} IDR<extra></extra>`
+  };
+  const dataTraces = isSinglePlayerChart ? [wagerTrace, ...profitTraces] : [...profitTraces];
   if (fgDataset.length > 0) dataTraces.push(freeGameTrace);
   if (gsDataset.length > 0) dataTraces.push(gameSwitchTrace);
 
-  Plotly.newPlot('chart-viewport', dataTraces, layout, config);
+  Plotly.react('chart-viewport', dataTraces, layout, config);
 }
 
 function resetDashboardState() {
   // 重置清空目前指標數據看板、表格與圖表至初始狀態
   analyzedData = [];
+  gameWagerSummaryBody.innerHTML = `<tr><td colspan="5" class="table-empty-message">--</td></tr>`;
+  if (chartRenderFrame !== null) {
+    cancelAnimationFrame(chartRenderFrame);
+    chartRenderFrame = null;
+  }
   
   metricStatsSpins.textContent = "0";
   metricStatsTotalWager.textContent = "0 IDR";
@@ -1657,14 +1956,15 @@ function buildChartCustomData(row, lang) {
     formatCurrency(row.bet_amount),
     formatCurrency(row.total_prize),
     formatGameDisplay(row.slot_id, row.game_name),
-    formatDateTimeForTooltip(row.bet_at),
+    formatDateTimeForTooltip(row.bet_at_utc7),
     getBetTypeLabel(row.bet_type, lang),
     row.player_id
   ];
 }
 
 function formatGameNameOnly(slotId, gameName) {
-  return gameName || String(slotId);
+  const normalizedName = String(gameName || '').trim();
+  return normalizedName && normalizedName !== String(slotId) ? normalizedName : '--';
 }
 
 function renderHomeDashboard(data) {
@@ -1673,6 +1973,7 @@ function renderHomeDashboard(data) {
   const previousMonth = data.previous_month || {};
   const currentDay = data.current_day || {};
   const referenceDate = data.reference_date || data.latest_date || '--';
+  const sevenDayStart = referenceDate === '--' ? '' : shiftGameDate(referenceDate, -6);
   document.getElementById('home-data-date').textContent = lang.homeDataDate.replace('{date}', data.latest_date || '--');
   document.getElementById('home-month-range').textContent = lang.homeMonthRangeComparison
     .replace('{currentStart}', data.current_month_start || '--')
@@ -1707,21 +2008,103 @@ function renderHomeDashboard(data) {
     x: ggrRows.map(row => row.date), y: ggrRows.map(row => Number(row.ggr || 0)),
     name: 'GGR', type: 'bar', marker: { color: ggrRows.map(row => Number(row.ggr || 0) >= 0 ? '#10b981' : '#ef4444') },
     hovertemplate: '%{x}<br>GGR: %{y:,.0f} IDR<extra></extra>'
-  }], monthlyChartLayout(lang.homeGgr30d, lang.axisGgr), { responsive: true, displaylogo: false, displayModeBar: false });
+  }, {
+    x: ggrRows.map(row => row.date), y: ggrRows.map(row => Number(row.dau || 0)),
+    name: 'DAU', type: 'scatter', mode: 'lines+markers', yaxis: 'y2',
+    line: { color: '#38bdf8', width: 3 }, marker: { size: 6 },
+    hovertemplate: '%{x}<br>DAU: %{y:,.0f}<extra></extra>'
+  }], monthlyChartLayout(lang.homeGgr30d, lang.axisGgr, {
+    margin: { l: 65, r: 65, t: 48, b: 45 },
+    yaxis2: {
+      title: 'DAU', overlaying: 'y', side: 'right', rangemode: 'tozero',
+      gridcolor: 'rgba(0,0,0,0)', tickfont: { color: '#0284c7' }
+    }
+  }), { responsive: true, displaylogo: false, displayModeBar: false });
 
-  const renderGameRows = (bodyId, rows) => {
-    document.getElementById(bodyId).innerHTML = rows.length ? rows.map(row => `<tr>
+  const hourlySpinRows = data.hourly_spins_24h || [];
+  Plotly.newPlot('home-hourly-spins-chart', [{
+    x: hourlySpinRows.map(row => row.hour),
+    y: hourlySpinRows.map(row => Number(row.spin_count || 0)),
+    name: 'Spin',
+    type: 'bar',
+    marker: { color: '#6366f1' },
+    hovertemplate: '%{x|%Y-%m-%d %H:00}<br>Spin: %{y:,.0f}<extra></extra>'
+  }], monthlyChartLayout(lang.homeHourlySpins, lang.totalSpinsLabel, {
+    margin: { l: 65, r: 20, t: 48, b: 55 },
+    xaxis: { tickformat: '%m/%d %H:00', dtick: 3 * 60 * 60 * 1000 }
+  }), { responsive: true, displaylogo: false, displayModeBar: false });
+
+  const renderGameRows = (bodyId, rows, startDate, endDate) => {
+    const body = document.getElementById(bodyId);
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="3">--</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(row => `<tr class="home-ranking-link-row" tabindex="0" role="link">
       <td>${escapeHtml(row.game_name || row.slot_id)}</td><td>${formatCount(row.total_spin_count)}</td><td>${formatCount(row.ggr)}</td>
-    </tr>`).join('') : `<tr><td colspan="3">--</td></tr>`;
+    </tr>`).join('');
+    Array.from(body.rows).forEach((tableRow, index) => {
+      const game = rows[index];
+      const gameName = game.game_name || String(game.slot_id);
+      tableRow.title = currentLang === 'zh'
+        ? `查看 ${gameName} 的遊戲績效分析`
+        : `Open game performance analysis for ${gameName}`;
+      tableRow.setAttribute('aria-label', tableRow.title);
+      const openGameAnalysis = () => {
+        gameDateModeSelect.value = startDate === endDate ? 'today' : 'seven-days';
+        setGameDateMode();
+        gameStartDate.value = startDate;
+        gameEndDate.value = endDate;
+        const slotId = String(game.slot_id);
+        const slotIsLoaded = Array.from(gameSlotSelect.options).some(option => option.value === slotId);
+        pendingGameSlot = slotIsLoaded ? '' : slotId;
+        gameSlotSelect.value = slotIsLoaded ? slotId : 'ALL';
+        setActivePage('game');
+        if (gameLatestAvailableDate) loadGameData();
+      };
+      tableRow.addEventListener('click', openGameAnalysis);
+      tableRow.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        openGameAnalysis();
+      });
+    });
   };
-  const renderPlayerRows = (bodyId, rows) => {
-    document.getElementById(bodyId).innerHTML = rows.length ? rows.map(row => `<tr>
+  const renderPlayerRows = (bodyId, rows, startDate, endDate) => {
+    const body = document.getElementById(bodyId);
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="5">--</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(row => `<tr class="home-ranking-link-row" tabindex="0" role="link">
       <td>${escapeHtml(row.username || row.player_id)}</td><td>${formatCount(row.total_spin_count)}</td><td>${formatCount(row.total_bet_amount)}</td>
       <td>${formatCount(row.total_win_amount)}</td><td class="profit-positive">${formatCount(row.profit)}</td>
-    </tr>`).join('') : `<tr><td colspan="5">--</td></tr>`;
+    </tr>`).join('');
+    Array.from(body.rows).forEach((tableRow, index) => {
+      const player = rows[index];
+      const username = player.username || String(player.player_id);
+      tableRow.title = currentLang === 'zh'
+        ? `查看 ${username} 的單獨玩家分析`
+        : `Open individual analysis for ${username}`;
+      tableRow.setAttribute('aria-label', tableRow.title);
+      const openPlayerAnalysis = () => {
+        singlePlayerName.value = username;
+        singlePlayerStartDate.value = startDate;
+        singlePlayerEndDate.value = endDate;
+        singlePlayerStatus.textContent = '';
+        setActivePage('single-player');
+        loadSinglePlayerData(player.player_id);
+      };
+      tableRow.addEventListener('click', openPlayerAnalysis);
+      tableRow.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        openPlayerAnalysis();
+      });
+    });
   };
-  renderGameRows('home-game-7d-body', data.game_rankings?.seven_day || []);
-  renderGameRows('home-game-day-body', data.game_rankings?.current_day || []);
+  renderGameRows('home-game-7d-body', data.game_rankings?.seven_day || [], sevenDayStart, referenceDate);
+  renderGameRows('home-game-day-body', data.game_rankings?.current_day || [], referenceDate, referenceDate);
   const renderAgentPeriod = (chartId, bodyId, rows, title) => {
     const rankedRows = [...rows].sort((a, b) => Number(b.total_spin_count || 0) - Number(a.total_spin_count || 0));
     const pieTopRows = rankedRows.slice(0, 5);
@@ -1753,30 +2136,43 @@ function renderHomeDashboard(data) {
   };
   renderAgentPeriod('home-agent-7d-chart', 'home-agent-7d-body', data.agent_performance?.seven_day || [], currentLang === 'zh' ? '近 7 日 Agent Spin 占比' : '7-Day Agent Spin Share');
   renderAgentPeriod('home-agent-day-chart', 'home-agent-day-body', data.agent_performance?.current_day || [], currentLang === 'zh' ? '當日 Agent Spin 占比' : 'Current-Day Agent Spin Share');
-  renderPlayerRows('home-player-7d-body', data.player_alerts?.seven_day || []);
-  renderPlayerRows('home-player-day-body', data.player_alerts?.current_day || []);
+  renderPlayerRows('home-player-7d-body', data.player_alerts?.seven_day || [], sevenDayStart, referenceDate);
+  renderPlayerRows('home-player-day-body', data.player_alerts?.current_day || [], referenceDate, referenceDate);
   homeStatus.textContent = '';
 }
 
-async function loadHomeDashboard() {
-  homeStatus.textContent = translations[currentLang].homeLoading;
-  try {
-    const response = await fetch('/api/home-dashboard');
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Home dashboard API request failed');
-    homeDashboardCache = data;
-    renderHomeDashboard(data);
-  } catch (error) {
-    homeStatus.textContent = translations[currentLang].homeLoadError.replace('{message}', error.message);
-  }
+function loadHomeDashboard({ silent = false } = {}) {
+  if (homeDashboardRequest) return homeDashboardRequest;
+  if (!silent) homeStatus.textContent = translations[currentLang].homeLoading;
+  homeDashboardRequest = (async () => {
+    try {
+      const response = await fetch('/api/home-dashboard');
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Home dashboard API request failed');
+      homeDashboardCache = data;
+      homeDashboardLoadedAt = Date.now();
+      renderHomeDashboard(data);
+    } catch (error) {
+      homeStatus.textContent = translations[currentLang].homeLoadError.replace('{message}', error.message);
+    } finally {
+      homeDashboardRequest = null;
+    }
+  })();
+  return homeDashboardRequest;
+}
+
+function startHomeAutoRefresh() {
+  if (homeRefreshTimer !== null) return;
+  homeRefreshTimer = window.setInterval(() => {
+    if (document.hidden || document.body.classList.contains('auth-locked') || homeContent.hidden) return;
+    loadHomeDashboard({ silent: true });
+  }, HOME_REFRESH_INTERVAL_MS);
 }
 
 function populateAgentSelect() {
   const parentValue = agentParentSelect.value;
   const currentValue = agentSelect.value;
-  const rows = parentValue === 'ALL'
-    ? agentOptionRows
-    : agentOptionRows.filter(row => String(row.parent_agent_id) === parentValue);
+  const rows = parentValue === 'ALL' ? [] : agentOptionRows.filter(row => String(row.parent_agent_id) === parentValue);
   const agents = [...new Map(rows.map(row => [String(row.agent_id), row])).values()];
   const agentIds = agents.map(row => String(row.agent_id));
   agentSelect.innerHTML = '<option value="ALL">ALL</option>';
@@ -1788,6 +2184,20 @@ function populateAgentSelect() {
     agentSelect.appendChild(option);
   });
   agentSelect.value = agentIds.includes(currentValue) ? currentValue : 'ALL';
+  updateAgentFilterVisibility();
+}
+
+function updateAgentFilterVisibility() {
+  const parentSelected = agentParentSelect.value !== 'ALL';
+  const agentSelected = parentSelected && agentSelect.value !== 'ALL';
+  agentLabelAgent.hidden = !parentSelected;
+  agentSelect.hidden = !parentSelected;
+  agentGameLabel.hidden = !agentSelected;
+  agentGameSelect.hidden = !agentSelected;
+  if (!parentSelected) {
+    agentSelect.value = 'ALL';
+  }
+  if (!agentSelected) agentGameSelect.value = 'ALL';
 }
 
 async function initializeAgentPage() {
@@ -1799,6 +2209,9 @@ async function initializeAgentPage() {
     const options = await optionsResponse.json();
     if (!datesResponse.ok) throw new Error(dates.error || 'Unable to load dates');
     if (!optionsResponse.ok) throw new Error(options.error || 'Unable to load agents');
+    if (dates.length && (!gameLatestAvailableDate || dates[0] > gameLatestAvailableDate)) {
+      gameLatestAvailableDate = dates[0];
+    }
     agentOptionRows = options.agents || [];
     agentParentSelect.innerHTML = '<option value="ALL">ALL</option>';
     (options.parent_agents || []).forEach(parentId => {
@@ -1827,20 +2240,303 @@ async function initializeAgentPage() {
   }
 }
 
+function aggregateAgentRows(rows, keyFor, labelFor) {
+  const grouped = new Map();
+  rows.forEach(row => {
+    const key = keyFor(row);
+    if (!grouped.has(key)) grouped.set(key, {
+      key, label: labelFor(row), parent_agent_id: row.parent_agent_id, agent_id: row.agent_id,
+      date: row.date, spin_count: 0, total_bet_amount: 0, total_win_amount: 0, ggr: 0
+    });
+    const target = grouped.get(key);
+    ['spin_count', 'total_bet_amount', 'total_win_amount', 'ggr'].forEach(field => {
+      target[field] += Number(row[field] || 0);
+    });
+  });
+  return Array.from(grouped.values());
+}
+
+function makeAgentRowsInteractive(body, rows, activate, labelFor) {
+  Array.from(body.rows).forEach((tableRow, index) => {
+    const row = rows[index];
+    tableRow.classList.add('home-ranking-link-row');
+    tableRow.tabIndex = 0;
+    tableRow.setAttribute('role', 'link');
+    tableRow.title = labelFor(row);
+    const open = () => activate(row);
+    tableRow.addEventListener('click', open);
+    tableRow.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      open();
+    });
+  });
+}
+
+async function loadAgentGamePerformance(slotId) {
+  const requestId = ++agentGamePerformanceRequestId;
+  const params = new URLSearchParams({
+    parent_agent_id: agentParentSelect.value,
+    agent_id: agentSelect.value,
+    slot_id: slotId,
+    start_date: agentStartDate.value,
+    end_date: agentEndDate.value
+  });
+  agentStatus.textContent = translations[currentLang].agentLoading;
+  try {
+    const response = await fetch(`/api/agent-game-performance?${params}`);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Agent game performance request failed');
+    if (requestId !== agentGamePerformanceRequestId || agentGameSelect.value !== String(slotId)) return;
+    renderAgentGamePerformance(payload);
+    agentStatus.textContent = translations[currentLang].agentLoaded;
+  } catch (error) {
+    if (requestId !== agentGamePerformanceRequestId) return;
+    agentStatus.textContent = translations[currentLang].agentLoadError.replace('{message}', error.message);
+  }
+}
+
+function matureRetentionPercent(row, field, dayOffset) {
+  const value = row?.[field];
+  const dnu = Number(row?.dnu);
+  if (!Number.isFinite(dnu) || dnu <= 0) return null;
+  if (!row?.date || !gameLatestAvailableDate) return null;
+  const observationDate = shiftGameDate(row.date, dayOffset);
+  if (observationDate >= gameLatestAvailableDate) return null;
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number * 100 : null;
+}
+
+function retentionBarItems(row) {
+  return [
+    { label: 'D1', value: matureRetentionPercent(row, 'retention_1', 1), color: '#10b981' },
+    { label: 'D3', value: matureRetentionPercent(row, 'retention_3', 3), color: '#f59e0b' },
+    { label: 'D7', value: matureRetentionPercent(row, 'retention_7', 7), color: '#ef4444' }
+  ].filter(item => item.value !== null);
+}
+
+function renderAgentGamePerformance(payload) {
+  const rows = payload.rows || [];
+  const hourlyPlayers = payload.hourly_players || [];
+  const medianByDate = new Map((payload.medians || []).map(row => [row.date, row.median_player_spin_count]));
+  const data = rows.map(row => ({ ...row, median_player_spin_count: medianByDate.get(row.date) ?? null }));
+  const lang = translations[currentLang];
+  const common = { responsive: true, displaylogo: false, displayModeBar: false };
+  const dates = data.map(row => row.date);
+  const singleDay = agentStartDate.value === agentEndDate.value;
+  const total = key => data.reduce((sum, row) => sum + Number(row[key] || 0), 0);
+  const average = key => data.length ? total(key) / data.length : 0;
+  const totalBet = total('total_bet_amount');
+  const totalWin = total('total_win_amount');
+
+  document.getElementById('agent-game-avg-players').textContent = formatCount(average('player_count'));
+  document.getElementById('agent-game-avg-dnu').textContent = formatCount(average('dnu'));
+  document.getElementById('agent-game-avg-rtp').textContent = `${(totalBet ? totalWin / totalBet * 100 : 0).toFixed(2)}%`;
+  document.getElementById('agent-game-total-spins').textContent = formatCount(total('total_spin_count'));
+  document.getElementById('agent-game-total-bet').textContent = formatCount(totalBet);
+  document.getElementById('agent-game-total-win').textContent = formatCount(totalWin);
+  document.getElementById('agent-game-total-ggr').textContent = formatCount(totalBet - totalWin);
+  document.getElementById('agent-game-days').textContent = formatCount(data.length);
+
+  Plotly.newPlot('agent-game-player-chart', [{
+    x: dates, y: data.map(row => Number(row.player_count || 0)), name: lang.axisPlayers,
+    type: 'scatter', mode: 'lines+markers', line: { color: '#38bdf8', width: 3 }
+  }], monthlyChartLayout(lang.chartGamePlayers, lang.axisPlayers), common);
+  Plotly.newPlot('agent-game-ggr-chart', [{
+    x: dates, y: data.map(row => Number(row.total_bet_amount || 0) - Number(row.total_win_amount || 0)),
+    name: 'GGR', type: 'bar', marker: { color: data.map(row => Number(row.total_bet_amount || 0) - Number(row.total_win_amount || 0) >= 0 ? '#10b981' : '#ef4444') }
+  }], monthlyChartLayout(lang.chartGameGgr, lang.axisGgr), common);
+
+  document.getElementById('agent-game-dau-dnu-panel').hidden = singleDay;
+  document.getElementById('agent-game-rtp-panel').hidden = singleDay;
+  if (!singleDay) {
+    Plotly.newPlot('agent-game-dau-dnu-chart', [
+      { x: dates, y: data.map(row => Number(row.player_count || 0)), name: 'DAU', type: 'scatter', mode: 'lines+markers', line: { color: '#38bdf8', width: 3 } },
+      { x: dates, y: data.map(row => Number(row.dnu || 0)), name: 'DNU', type: 'scatter', mode: 'lines+markers', line: { color: '#ff5a1f', width: 2 } }
+    ], monthlyChartLayout(lang.chartGameDauDnu, lang.axisPlayers), common);
+    Plotly.newPlot('agent-game-rtp-chart', [{
+      x: dates, y: data.map(row => Number(row.rtp || 0) * 100), name: 'RTP', type: 'scatter', mode: 'lines+markers', line: { color: '#6366f1', width: 3 }
+    }], monthlyChartLayout(lang.chartGameRtp, lang.axisRtp, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
+    Plotly.newPlot('agent-game-retention-chart', [
+      { x: dates, y: data.map(row => matureRetentionPercent(row, 'retention_1', 1)), name: 'D1', type: 'scatter', mode: 'lines+markers', connectgaps: false, line: { color: '#10b981' } },
+      { x: dates, y: data.map(row => matureRetentionPercent(row, 'retention_3', 3)), name: 'D3', type: 'scatter', mode: 'lines+markers', connectgaps: false, line: { color: '#f59e0b' } },
+      { x: dates, y: data.map(row => matureRetentionPercent(row, 'retention_7', 7)), name: 'D7', type: 'scatter', mode: 'lines+markers', connectgaps: false, line: { color: '#ef4444' } }
+    ], monthlyChartLayout(lang.chartGameRetention, lang.axisRetention, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
+  } else {
+    const day = data[0] || {};
+    const retentionBars = retentionBarItems(day);
+    Plotly.newPlot('agent-game-retention-chart', [{
+      x: retentionBars.map(item => item.label), y: retentionBars.map(item => item.value),
+      type: 'bar', marker: { color: retentionBars.map(item => item.color) }, showlegend: false
+    }], monthlyChartLayout(lang.chartGameRetention, lang.axisRetention, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
+  }
+
+  Plotly.newPlot('agent-game-bet-type-chart', [
+    { x: hourlyPlayers.map(row => row.hour), y: hourlyPlayers.map(row => Number(row.bet_1_player_count || 0)), name: lang.betTypeNormal, type: 'scatter', mode: 'lines+markers', line: { color: '#6366f1' } },
+    { x: hourlyPlayers.map(row => row.hour), y: hourlyPlayers.map(row => Number(row.bet_2_player_count || 0)), name: lang.betTypeAnte, type: 'scatter', mode: 'lines+markers', line: { color: '#f59e0b' } },
+    { x: hourlyPlayers.map(row => row.hour), y: hourlyPlayers.map(row => Number(row.bet_3_player_count || 0)), name: lang.betTypeBuy, type: 'scatter', mode: 'lines+markers', line: { color: '#10b981' } }
+  ], monthlyChartLayout(singleDay ? lang.chartGameHourlyBetTypePlayers : lang.chartGameHourlyBetTypePlayersAverage, lang.axisPlayers, { xaxis: { dtick: 2 } }), common);
+
+  renderGameSpinDistribution(data, 'agent-game-spin-distribution-chart');
+  const betTypes = [
+    { id: 1, label: `Bet 1 · ${lang.betTypeNormal}` },
+    { id: 2, label: `Bet 2 · ${lang.betTypeAnte}` },
+    { id: 3, label: `Bet 3 · ${lang.betTypeBuy}` }
+  ];
+  document.getElementById('agent-game-daily-bet-body').innerHTML = data.flatMap(row => betTypes.map(betType => {
+    const prefix = `bet_${betType.id}`;
+    const bet = Number(row[`${prefix}_total_bet_amount`] || 0);
+    const win = Number(row[`${prefix}_total_win_amount`] || 0);
+    return `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(betType.label)}</td>
+      <td>${formatCount(row[`${prefix}_player_count`])}</td><td>${formatCount(row[`${prefix}_spin_count`])}</td>
+      <td>${formatCount(bet)}</td><td>${formatCount(win)}</td><td>${(bet ? win / bet * 100 : 0).toFixed(2)}%</td><td>${formatCount(bet - win)}</td></tr>`;
+  })).join('') || '<tr><td colspan="8" class="table-empty-message">--</td></tr>';
+}
+
 function renderAgentAnalysis(data) {
+  agentAnalysisCache = data;
   const cube = data.cube || [];
   const details = data.details || [];
-  document.getElementById('agent-cube-body').innerHTML = cube.length ? cube.map(row => `<tr>
-    <td>${escapeHtml(`${row.parent_agent_name} / ${row.agent_name}`)}</td><td>${formatCount(row.player_count)}</td><td>${formatCount(row.dnu)}</td>
-    <td>${formatCount(row.spin_count)}</td><td>${formatCount(row.total_bet_amount)}</td><td>${formatCount(row.total_win_amount)}</td><td>${formatCount(row.ggr)}</td>
-  </tr>`).join('') : '<tr><td colspan="7">--</td></tr>';
-  document.getElementById('agent-details-body').innerHTML = details.length ? details.map(row => `<tr>
-    <td>${escapeHtml(row.date)}</td><td>${escapeHtml(`${row.parent_agent_name} / ${row.agent_name}`)}</td><td>${escapeHtml(getBetTypeLabel(row.bet_type, translations[currentLang]))}</td><td>${formatCount(row.player_count)}</td>
-    <td>${formatCount(row.total_bet_amount)}</td><td>${formatCount(row.total_win_amount)}</td><td>${formatCount(row.ggr)}</td>
-  </tr>`).join('') : '<tr><td colspan="7">--</td></tr>';
+  const games = data.games || [];
+  const gameDetails = data.game_details || [];
+  const parentSelected = agentParentSelect.value !== 'ALL';
+  const agentSelected = parentSelected && agentSelect.value !== 'ALL';
+  const selectedGameId = agentSelected ? agentGameSelect.value : 'ALL';
+  const selectedGame = selectedGameId === 'ALL'
+    ? null
+    : games.find(row => String(row.slot_id) === selectedGameId);
+  const selectedGameName = selectedGame?.game_name || selectedGame?.slot_id || selectedGameId;
+  const common = { responsive: true, displaylogo: false, displayModeBar: false };
+  let chartRows;
+  let spinTitle;
+  let ggrTitle;
+
+  if (!parentSelected) {
+    chartRows = aggregateAgentRows(cube, row => String(row.parent_agent_id), row => row.parent_agent_name || row.parent_agent_id);
+    spinTitle = currentLang === 'zh' ? 'Parent Agent Total Spin 占比' : 'Parent Agent Total Spin Share';
+    ggrTitle = currentLang === 'zh' ? '各 Parent Agent GGR' : 'GGR by Parent Agent';
+  } else if (!agentSelected) {
+    chartRows = cube.map(row => ({ ...row, label: row.agent_name || row.agent_id }));
+    spinTitle = currentLang === 'zh' ? 'Agent Total Spin 占比（前 5 名）' : 'Agent Total Spin Share (Top 5)';
+    ggrTitle = currentLang === 'zh' ? '各 Agent GGR' : 'GGR by Agent';
+  } else {
+    if (selectedGame) {
+      chartRows = gameDetails
+        .filter(row => String(row.slot_id) === selectedGameId)
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map(row => ({ ...row, label: row.date }));
+      const context = `${agentParentSelect.options[agentParentSelect.selectedIndex]?.text || agentParentSelect.value} / ${agentSelect.options[agentSelect.selectedIndex]?.text || agentSelect.value} / ${selectedGameName}`;
+      spinTitle = currentLang === 'zh' ? `${context} 每日 Total Spin` : `${context} Daily Total Spins`;
+      ggrTitle = currentLang === 'zh' ? `${context} 每日 GGR` : `${context} Daily GGR`;
+    } else {
+      chartRows = games.map(row => ({ ...row, label: row.game_name || row.slot_id }));
+      spinTitle = currentLang === 'zh' ? '所有遊戲 Total Spin' : 'Total Spins by Game';
+      ggrTitle = currentLang === 'zh' ? '所有遊戲 GGR' : 'GGR by Game';
+    }
+  }
+
+  const ranked = [...chartRows].sort((a, b) => Number(b.spin_count || 0) - Number(a.spin_count || 0));
+  if (!agentSelected) {
+    let pieRows = ranked;
+    if (parentSelected && ranked.length > 5) {
+      pieRows = [...ranked.slice(0, 5), {
+        label: currentLang === 'zh' ? '其他' : 'Other',
+        spin_count: ranked.slice(5).reduce((sum, row) => sum + Number(row.spin_count || 0), 0)
+      }];
+    }
+    Plotly.newPlot('agent-spin-chart', [{
+      labels: pieRows.map(row => row.label), values: pieRows.map(row => Number(row.spin_count || 0)),
+      type: 'pie', hole: 0.42, textinfo: 'label+percent',
+      hovertemplate: '%{label}<br>Total Spin: %{value:,.0f}<br>%{percent}<extra></extra>'
+    }], { ...monthlyChartLayout(spinTitle, ''), margin: { l: 20, r: 20, t: 48, b: 20 }, showlegend: false }, common);
+  } else {
+    const barRows = selectedGame ? chartRows : ranked;
+    Plotly.newPlot('agent-spin-chart', [{
+      x: barRows.map(row => row.label), y: barRows.map(row => Number(row.spin_count || 0)), type: 'bar',
+      marker: { color: '#6366f1' }, hovertemplate: '%{x}<br>Total Spin: %{y:,.0f}<extra></extra>'
+    }], monthlyChartLayout(spinTitle, 'Total Spin', { xaxis: { automargin: true } }), common);
+  }
+  Plotly.newPlot('agent-ggr-chart', [{
+    x: chartRows.map(row => row.label), y: chartRows.map(row => Number(row.ggr || 0)), type: 'bar',
+    marker: { color: chartRows.map(row => Number(row.ggr || 0) >= 0 ? '#10b981' : '#ef4444') },
+    hovertemplate: '%{x}<br>GGR: %{y:,.0f} IDR<extra></extra>'
+  }], monthlyChartLayout(ggrTitle, 'GGR (IDR)', { xaxis: { automargin: true } }), common);
+
+  const gamePanel = document.getElementById('agent-game-summary-panel');
+  gamePanel.hidden = !parentSelected || agentSelected;
+  if (!gamePanel.hidden) {
+    document.getElementById('agent-game-summary-body').innerHTML = games.length ? games.map(row => `<tr>
+      <td>${escapeHtml(row.game_name || String(row.slot_id))}</td><td>${formatCount(row.spin_count)}</td>
+      <td>${formatCount(row.total_bet_amount)}</td><td>${formatCount(row.total_win_amount)}</td><td>${formatCount(row.ggr)}</td>
+    </tr>`).join('') : '<tr><td colspan="5" class="table-empty-message">--</td></tr>';
+  }
+
+  agentGameSelect.innerHTML = `<option value="ALL">${currentLang === 'zh' ? '全部遊戲' : 'All Games'}</option>`;
+  games.forEach(row => {
+    const option = document.createElement('option');
+    option.value = String(row.slot_id);
+    option.textContent = formatGameDisplay(row.slot_id, row.game_name);
+    agentGameSelect.appendChild(option);
+  });
+  if (Array.from(agentGameSelect.options).some(option => option.value === selectedGameId)) {
+    agentGameSelect.value = selectedGameId;
+  }
+  const showScopedGamePerformance = Boolean(agentSelected && selectedGame);
+  document.getElementById('agent-overview-charts').hidden = showScopedGamePerformance;
+  document.getElementById('agent-details-panel').hidden = showScopedGamePerformance;
+  document.getElementById('agent-game-performance').hidden = !showScopedGamePerformance;
+
+  const detailsHead = document.getElementById('agent-details-head');
+  const detailsBody = document.getElementById('agent-details-body');
+  let displayRows;
+  if (agentSelected) {
+    document.getElementById('agent-details-title').textContent = selectedGame
+      ? (currentLang === 'zh' ? `${selectedGameName} 每日明細` : `${selectedGameName} Daily Details`)
+      : (currentLang === 'zh' ? '所有遊戲每日明細（點擊選擇遊戲）' : 'Daily Game Details (click to select game)');
+    detailsHead.innerHTML = '<tr><th>Date</th><th>Game</th><th>Total Spin</th><th>Bet Amount</th><th>Win Amount</th><th>GGR</th></tr>';
+    displayRows = gameDetails
+      .filter(row => !selectedGame || String(row.slot_id) === selectedGameId)
+      .sort((a, b) => b.date.localeCompare(a.date) || Number(b.spin_count) - Number(a.spin_count));
+    detailsBody.innerHTML = displayRows.length ? displayRows.map(row => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.game_name || String(row.slot_id))}</td>
+      <td>${formatCount(row.spin_count)}</td><td>${formatCount(row.total_bet_amount)}</td><td>${formatCount(row.total_win_amount)}</td><td>${formatCount(row.ggr)}</td></tr>`).join('') : '<tr><td colspan="6" class="table-empty-message">--</td></tr>';
+    if (displayRows.length && !selectedGame) makeAgentRowsInteractive(detailsBody, displayRows, row => {
+      agentGameSelect.value = String(row.slot_id);
+      renderAgentAnalysis(agentAnalysisCache);
+      saveUiState();
+    }, row => currentLang === 'zh' ? `選擇 ${row.game_name || row.slot_id}` : `Select ${row.game_name || row.slot_id}`);
+  } else {
+    const keyFor = parentSelected
+      ? row => `${row.date}|${row.agent_id}`
+      : row => `${row.date}|${row.parent_agent_id}`;
+    const labelFor = parentSelected
+      ? row => row.agent_name || row.agent_id
+      : row => row.parent_agent_name || row.parent_agent_id;
+    displayRows = aggregateAgentRows(details, keyFor, labelFor).sort((a, b) => b.date.localeCompare(a.date) || String(a.label).localeCompare(String(b.label)));
+    const entityHeading = parentSelected ? 'Agent' : 'Parent Agent';
+    document.getElementById('agent-details-title').textContent = parentSelected
+      ? (currentLang === 'zh' ? 'Agent 每日明細（點擊下鑽）' : 'Daily Agent Details (click to drill down)')
+      : (currentLang === 'zh' ? 'Parent Agent 每日明細（點擊下鑽）' : 'Daily Parent Agent Details (click to drill down)');
+    detailsHead.innerHTML = `<tr><th>Date</th><th>${entityHeading}</th><th>Total Spin</th><th>Bet Amount</th><th>Win Amount</th><th>GGR</th></tr>`;
+    detailsBody.innerHTML = displayRows.length ? displayRows.map(row => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(String(row.label))}</td>
+      <td>${formatCount(row.spin_count)}</td><td>${formatCount(row.total_bet_amount)}</td><td>${formatCount(row.total_win_amount)}</td><td>${formatCount(row.ggr)}</td></tr>`).join('') : '<tr><td colspan="6" class="table-empty-message">--</td></tr>';
+    if (displayRows.length) makeAgentRowsInteractive(detailsBody, displayRows, row => {
+      if (!parentSelected) {
+        agentParentSelect.value = String(row.parent_agent_id);
+        populateAgentSelect();
+      } else {
+        agentSelect.value = String(row.agent_id);
+        updateAgentFilterVisibility();
+      }
+      loadAgentAnalysis();
+    }, row => currentLang === 'zh' ? `下鑽至 ${row.label}` : `Drill down to ${row.label}`);
+  }
+
   agentStatus.textContent = cube.length || details.length
     ? translations[currentLang].agentLoaded
     : translations[currentLang].agentNoData;
+  if (showScopedGamePerformance) loadAgentGamePerformance(selectedGameId);
+  else agentGamePerformanceRequestId += 1;
 }
 
 async function loadAgentAnalysis() {
@@ -1849,7 +2545,7 @@ async function loadAgentAnalysis() {
   const params = new URLSearchParams({
     parent_agent_id: agentParentSelect.value,
     agent_id: agentSelect.value,
-    bet_type: agentBetTypeSelect.value,
+    bet_type: 'ALL',
     start_date: agentStartDate.value,
     end_date: agentEndDate.value
   });
@@ -1869,8 +2565,11 @@ function setMonthlyMode() {
   const comparing = mode === 'compare';
   const periodMode = mode === 'quarter' || mode === 'half-year' || mode === 'year';
   monthlySingleControls.hidden = mode === 'compare';
+  btnMonthlyPrevious.hidden = mode !== 'single';
+  btnMonthlyNext.hidden = mode !== 'single';
   monthlyCompareControls.hidden = mode !== 'compare';
   monthlyBetTypePanel.hidden = comparing;
+  monthlyDnuPanel.hidden = !comparing;
   monthlyRetention3Panel.hidden = !comparing;
   monthlyRetention7Panel.hidden = !comparing;
   monthlyContent.classList.toggle('monthly-period-mode', periodMode);
@@ -1890,16 +2589,19 @@ function setActivePage(page) {
   const isMonthly = page === 'monthly';
   const isGame = page === 'game';
   const isAgent = page === 'agent';
+  const isSinglePlayer = page === 'single-player';
   const isPlayer = page === 'player';
   document.querySelector('main').classList.toggle('home-page', isHome);
   document.querySelector('main').classList.toggle('monthly-page', isMonthly);
   document.querySelector('main').classList.toggle('game-page', isGame);
   document.querySelector('main').classList.toggle('agent-page', isAgent);
+  document.querySelector('main').classList.toggle('single-player-page', isSinglePlayer);
   document.querySelector('main').classList.toggle('player-page', isPlayer);
   homeContent.hidden = !isHome;
   monthlyContent.hidden = !isMonthly;
   gameContent.hidden = !isGame;
   agentContent.hidden = !isAgent;
+  singlePlayerContent.hidden = !isSinglePlayer;
 
   pageNavItems.forEach((item) => {
     const active = item.dataset.page === page;
@@ -1916,6 +2618,16 @@ function setActivePage(page) {
   }
   if (isHome) loadHomeDashboard();
   if (isAgent) initializeAgentPage();
+  if (isSinglePlayer && (!singlePlayerStartDate.value || !singlePlayerEndDate.value)) {
+    fetch('/api/dates')
+      .then(response => response.json())
+      .then(dates => {
+        if (!Array.isArray(dates) || !dates.length) return;
+        singlePlayerEndDate.value = dates[0];
+        singlePlayerStartDate.value = dates[Math.min(6, dates.length - 1)];
+      })
+      .catch(() => {});
+  }
   saveUiState();
 }
 
@@ -1945,7 +2657,11 @@ function renderMonthlyCharts(rows) {
   Plotly.newPlot('monthly-rtp-chart', [
     { x: dates, y: rows.map(r => pct(r.rtp)), name: 'RTP', type: 'scatter', mode: 'lines+markers', line: { color: '#6366f1', width: 3 } },
     { x: dates, y: rows.map(r => pct(r.odd_rtp)), name: 'Odd RTP', type: 'scatter', mode: 'lines+markers', line: { color: '#f59e0b', width: 2 } }
-  ], monthlyChartLayout(lang.chartDailyRtp, lang.axisRtp, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
+  ], monthlyChartLayout(lang.chartDailyRtp, lang.axisRtp, {
+    margin: { l: 55, r: 20, t: 58, b: 45 },
+    legend: { orientation: 'h', x: 0.42, y: 1.15, xanchor: 'left', yanchor: 'top', font: { color: '#475569' }, bgcolor: 'rgba(255, 255, 255, 0.9)' },
+    yaxis: { tickformat: '.1f', ticksuffix: '%' }
+  }), common);
 
   Plotly.newPlot('monthly-ggr-chart', [
     { x: dates, y: rows.map(r => money(r.total_bet_amount) - money(r.total_win_amount)), name: 'GGR', type: 'bar', marker: { color: '#10b981' } }
@@ -1997,16 +2713,21 @@ function renderMonthlyComparisonCharts(rows) {
   });
   Plotly.newPlot('monthly-rtp-chart', traces(r => pct(r.rtp)), layout(lang.chartDailyRtp, lang.axisRtp, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
   Plotly.newPlot('monthly-ggr-chart', traces(r => money(r.total_bet_amount) - money(r.total_win_amount), 'bar'), layout(lang.chartDailyGgr, lang.axisGgr, { barmode: 'group' }), common);
-  const dauDnuTraces = Array.from(groups, ([month, monthRows], index) => ([
-    { x: monthRows.map(row => Number(row.date.slice(8, 10))), y: monthRows.map(r => Number(r.player_count || 0)), name: `${month} DAU`, type: 'scatter', mode: 'lines+markers', line: { color: colors[index], width: 2 } },
-    { x: monthRows.map(row => Number(row.date.slice(8, 10))), y: monthRows.map(r => Number(r.dnu || 0)), name: `${month} DNU`, type: 'scatter', mode: 'lines+markers', line: { color: dnuColors[index], width: 2 } }
-  ])).flat();
+  const dauTraces = Array.from(groups, ([month, monthRows], index) => ({
+    x: monthRows.map(row => Number(row.date.slice(8, 10))), y: monthRows.map(r => Number(r.player_count || 0)),
+    name: month, type: 'scatter', mode: 'lines+markers', line: { color: colors[index], width: 2 }
+  }));
+  const dnuTraces = Array.from(groups, ([month, monthRows], index) => ({
+    x: monthRows.map(row => Number(row.date.slice(8, 10))), y: monthRows.map(r => Number(r.dnu || 0)),
+    name: month, type: 'scatter', mode: 'lines+markers', line: { color: dnuColors[index], width: 2 }
+  }));
   const dnuRateTraces = Array.from(groups, ([month, monthRows], index) => ({
     x: monthRows.map(row => Number(row.date.slice(8, 10))),
     y: monthRows.map(r => Number(r.player_count || 0) ? Number(r.dnu || 0) / Number(r.player_count) * 100 : 0),
     name: month, type: 'scatter', mode: 'lines+markers', line: { color: rateColors[index], width: 2 }
   }));
-  Plotly.newPlot('monthly-player-chart', dauDnuTraces, layout(lang.chartDauDnu, lang.axisPlayers), common);
+  Plotly.newPlot('monthly-player-chart', dauTraces, layout(lang.chartDailyPlayers, lang.axisPlayers), common);
+  Plotly.newPlot('monthly-dnu-chart', dnuTraces, layout(lang.chartDailyDnu, lang.axisPlayers), common);
   Plotly.newPlot('monthly-dnu-rate-chart', dnuRateTraces, layout(lang.chartDnuRate, lang.axisDnuRate, { yaxis: { ticksuffix: '%', rangemode: 'tozero' } }), common);
   const retentionLayout = label => layout(`${lang.chartRetention} (${label})`, lang.axisRetention, { yaxis: { tickformat: '.1f', ticksuffix: '%' } });
   Plotly.newPlot('monthly-retention-chart', traces(r => pct(r.retention_1)), retentionLayout('D1'), common);
@@ -2047,6 +2768,7 @@ async function loadMonthlyData() {
   clearExpandedMonthlyCube();
   const mode = monthlyModeSelect.value;
   const comparing = mode === 'compare';
+  const requestedSingleMonth = mode === 'single' ? monthlyMonthSelect.value : '';
   let startRange;
   let endRange;
   if (mode === 'compare') {
@@ -2084,8 +2806,16 @@ async function loadMonthlyData() {
     if (!response.ok) throw new Error(rows.error || 'Monthly API request failed');
     if (!rows.length) {
       monthlyStatus.textContent = translations[currentLang].monthlyNoData;
+      if (requestedSingleMonth) {
+        if (lastLoadedMonthlyMonth && lastLoadedMonthlyMonth !== requestedSingleMonth) {
+          monthlyMonthSelect.value = lastLoadedMonthlyMonth;
+          saveUiState();
+        }
+        window.alert(translations[currentLang].monthlyMonthNoData.replace('{month}', requestedSingleMonth));
+      }
       return;
     }
+    if (requestedSingleMonth) lastLoadedMonthlyMonth = requestedSingleMonth;
     monthlyDataCache = rows;
     updateMonthlyMetrics(rows);
     if (comparing) renderMonthlyComparisonCharts(rows);
@@ -2110,7 +2840,8 @@ function aggregateGameRows(rows) {
         date: key, player_count: 0, dnu: 0, total_spin_count: 0,
         total_bet_amount: 0, total_win_amount: 0,
         bet_1_player_count: 0, bet_2_player_count: 0, bet_3_player_count: 0,
-        retention_1: 0, retention_3: 0, retention_7: 0, _count: 0
+        retention_1: 0, retention_3: 0, retention_7: 0,
+        retention_1_count: 0, retention_3_count: 0, retention_7_count: 0
       });
     }
     const target = grouped.get(key);
@@ -2119,25 +2850,34 @@ function aggregateGameRows(rows) {
       target[field] += Number(row[field] || 0);
     });
     ['retention_1', 'retention_3', 'retention_7'].forEach(field => {
-      target[field] += Number(row[field] || 0);
+      const value = row[field];
+      if (Number(row.dnu) <= 0) return;
+      if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return;
+      const number = Number(value);
+      if (!Number.isFinite(number)) return;
+      target[field] += number;
+      target[`${field}_count`] += 1;
     });
-    target._count += 1;
   });
   return Array.from(grouped.values()).sort((a, b) => a.date.localeCompare(b.date)).map(row => ({
     ...row,
-    retention_1: row.retention_1 / row._count,
-    retention_3: row.retention_3 / row._count,
-    retention_7: row.retention_7 / row._count,
+    retention_1: row.retention_1_count ? row.retention_1 / row.retention_1_count : null,
+    retention_3: row.retention_3_count ? row.retention_3 / row.retention_3_count : null,
+    retention_7: row.retention_7_count ? row.retention_7 / row.retention_7_count : null,
     rtp: row.total_bet_amount ? row.total_win_amount / row.total_bet_amount : 0
   }));
 }
 
-function renderGameCharts(rows, selectedSlot) {
+function renderGameCharts(rows, selectedSlot, hourlyPlayers = []) {
   const lang = translations[currentLang];
   const data = selectedSlot === 'ALL' ? aggregateGameRows(rows) : rows;
   const dates = data.map(row => row.date);
+  const singleDay = gameStartDate.value === gameEndDate.value;
   const pct = value => Number(value || 0) * 100;
   const common = { responsive: true, displaylogo: false, displayModeBar: false };
+  gameDauDnuPanel.hidden = singleDay;
+  gameRtpPanel.hidden = singleDay;
+  gameRetentionPanel.hidden = false;
 
   if (selectedSlot === 'ALL') {
     const spinByGame = new Map();
@@ -2154,18 +2894,45 @@ function renderGameCharts(rows, selectedSlot) {
   } else {
     Plotly.newPlot('game-player-chart', [{ x: dates, y: data.map(r => Number(r.player_count || 0)), name: lang.axisPlayers, type: 'scatter', mode: 'lines+markers', line: { color: '#38bdf8', width: 3 } }], monthlyChartLayout(lang.chartGamePlayers, lang.axisPlayers), common);
   }
-  Plotly.newPlot('game-ggr-chart', [{ x: dates, y: data.map(r => Number(r.total_bet_amount || 0) - Number(r.total_win_amount || 0)), name: 'GGR', type: 'bar', marker: { color: '#10b981' } }], monthlyChartLayout(lang.chartGameGgr, lang.axisGgr), common);
-  Plotly.newPlot('game-rtp-chart', [{ x: dates, y: data.map(r => pct(r.rtp)), name: 'RTP', type: 'scatter', mode: 'lines+markers', line: { color: '#6366f1', width: 3 } }], monthlyChartLayout(lang.chartGameRtp, lang.axisRtp, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
-  Plotly.newPlot('game-retention-chart', [
-    { x: dates, y: data.map(r => pct(r.retention_1)), name: 'D1', type: 'scatter', mode: 'lines+markers', line: { color: '#10b981' } },
-    { x: dates, y: data.map(r => pct(r.retention_3)), name: 'D3', type: 'scatter', mode: 'lines+markers', line: { color: '#f59e0b' } },
-    { x: dates, y: data.map(r => pct(r.retention_7)), name: 'D7', type: 'scatter', mode: 'lines+markers', line: { color: '#ef4444' } }
-  ], monthlyChartLayout(lang.chartGameRetention, lang.axisRetention, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
-  Plotly.newPlot('game-bet-type-chart', [
-    { x: dates, y: data.map(r => Number(r.bet_1_player_count || 0)), name: lang.betTypeNormal, type: 'scatter', mode: 'lines', line: { color: '#6366f1' } },
-    { x: dates, y: data.map(r => Number(r.bet_2_player_count || 0)), name: lang.betTypeAnte, type: 'scatter', mode: 'lines', line: { color: '#f59e0b' } },
-    { x: dates, y: data.map(r => Number(r.bet_3_player_count || 0)), name: lang.betTypeBuy, type: 'scatter', mode: 'lines', line: { color: '#10b981' } }
-  ], monthlyChartLayout(lang.chartGameBetTypePlayers, lang.axisPlayers), common);
+  if (singleDay) {
+    Plotly.newPlot('game-ggr-chart', [{
+      x: rows.map(row => row.game_name || String(row.slot_id)),
+      y: rows.map(row => Number(row.total_bet_amount || 0) - Number(row.total_win_amount || 0)),
+      name: 'GGR', type: 'bar',
+      marker: { color: rows.map(row => Number(row.total_bet_amount || 0) - Number(row.total_win_amount || 0) >= 0 ? '#10b981' : '#ef4444') }
+    }], monthlyChartLayout(lang.chartGameGgrByGame, lang.axisGgr, { xaxis: { automargin: true } }), common);
+  } else {
+    Plotly.newPlot('game-ggr-chart', [{ x: dates, y: data.map(r => Number(r.total_bet_amount || 0) - Number(r.total_win_amount || 0)), name: 'GGR', type: 'bar', marker: { color: '#10b981' } }], monthlyChartLayout(lang.chartGameGgr, lang.axisGgr), common);
+    Plotly.newPlot('game-dau-dnu-chart', [
+      { x: dates, y: data.map(r => Number(r.player_count || 0)), name: 'DAU', type: 'scatter', mode: 'lines+markers', line: { color: '#38bdf8', width: 3 } },
+      { x: dates, y: data.map(r => Number(r.dnu || 0)), name: 'DNU', type: 'scatter', mode: 'lines+markers', line: { color: '#ff5a1f', width: 2 } }
+    ], monthlyChartLayout(lang.chartGameDauDnu, lang.axisPlayers), common);
+  }
+  if (singleDay) {
+    const day = data[0] || {};
+    const retentionBars = retentionBarItems(day);
+    Plotly.newPlot('game-retention-chart', [{
+      x: retentionBars.map(item => item.label), y: retentionBars.map(item => item.value),
+      type: 'bar', marker: { color: retentionBars.map(item => item.color) }, showlegend: false
+    }], monthlyChartLayout(lang.chartGameRetention, lang.axisRetention, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
+    Plotly.newPlot('game-bet-type-chart', [
+      { x: hourlyPlayers.map(r => r.hour), y: hourlyPlayers.map(r => Number(r.bet_1_player_count || 0)), name: lang.betTypeNormal, type: 'scatter', mode: 'lines+markers', line: { color: '#6366f1' } },
+      { x: hourlyPlayers.map(r => r.hour), y: hourlyPlayers.map(r => Number(r.bet_2_player_count || 0)), name: lang.betTypeAnte, type: 'scatter', mode: 'lines+markers', line: { color: '#f59e0b' } },
+      { x: hourlyPlayers.map(r => r.hour), y: hourlyPlayers.map(r => Number(r.bet_3_player_count || 0)), name: lang.betTypeBuy, type: 'scatter', mode: 'lines+markers', line: { color: '#10b981' } }
+    ], monthlyChartLayout(lang.chartGameHourlyBetTypePlayers, lang.axisPlayers, { xaxis: { dtick: 2 } }), common);
+  } else {
+    Plotly.newPlot('game-rtp-chart', [{ x: dates, y: data.map(r => pct(r.rtp)), name: 'RTP', type: 'scatter', mode: 'lines+markers', line: { color: '#6366f1', width: 3 } }], monthlyChartLayout(lang.chartGameRtp, lang.axisRtp, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
+    Plotly.newPlot('game-retention-chart', [
+      { x: dates, y: data.map(r => matureRetentionPercent(r, 'retention_1', 1)), name: 'D1', type: 'scatter', mode: 'lines+markers', connectgaps: false, line: { color: '#10b981' } },
+      { x: dates, y: data.map(r => matureRetentionPercent(r, 'retention_3', 3)), name: 'D3', type: 'scatter', mode: 'lines+markers', connectgaps: false, line: { color: '#f59e0b' } },
+      { x: dates, y: data.map(r => matureRetentionPercent(r, 'retention_7', 7)), name: 'D7', type: 'scatter', mode: 'lines+markers', connectgaps: false, line: { color: '#ef4444' } }
+    ], monthlyChartLayout(lang.chartGameRetention, lang.axisRetention, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
+    Plotly.newPlot('game-bet-type-chart', [
+      { x: hourlyPlayers.map(r => r.hour), y: hourlyPlayers.map(r => Number(r.bet_1_player_count || 0)), name: lang.betTypeNormal, type: 'scatter', mode: 'lines+markers', line: { color: '#6366f1' } },
+      { x: hourlyPlayers.map(r => r.hour), y: hourlyPlayers.map(r => Number(r.bet_2_player_count || 0)), name: lang.betTypeAnte, type: 'scatter', mode: 'lines+markers', line: { color: '#f59e0b' } },
+      { x: hourlyPlayers.map(r => r.hour), y: hourlyPlayers.map(r => Number(r.bet_3_player_count || 0)), name: lang.betTypeBuy, type: 'scatter', mode: 'lines+markers', line: { color: '#10b981' } }
+    ], monthlyChartLayout(lang.chartGameHourlyBetTypePlayersAverage, lang.axisPlayers, { xaxis: { dtick: 2 } }), common);
+  }
 }
 
 function updateGameMetrics(rows, selectedSlot) {
@@ -2185,6 +2952,42 @@ function updateGameMetrics(rows, selectedSlot) {
   document.getElementById('game-days').textContent = formatCount(data.length);
 }
 
+function renderGameDailyBetStats(rows, selectedSlot) {
+  gameDailyBetPanel.hidden = selectedSlot === 'ALL' || !rows.length;
+  if (gameDailyBetPanel.hidden) {
+    gameDailyBetBody.innerHTML = '';
+    return;
+  }
+
+  const lang = translations[currentLang];
+  const betTypes = [
+    { id: 1, label: `Bet 1 · ${lang.betTypeNormal}` },
+    { id: 2, label: `Bet 2 · ${lang.betTypeAnte}` },
+    { id: 3, label: `Bet 3 · ${lang.betTypeBuy}` }
+  ];
+  const dailyRows = [...rows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  gameDailyBetBody.innerHTML = dailyRows.flatMap(row => betTypes.map(betType => {
+    const prefix = `bet_${betType.id}`;
+    const playerCount = Number(row[`${prefix}_player_count`] || 0);
+    const spinCount = Number(row[`${prefix}_spin_count`] || 0);
+    const betAmount = Number(row[`${prefix}_total_bet_amount`] || 0);
+    const winAmount = Number(row[`${prefix}_total_win_amount`] || 0);
+    const rtp = betAmount ? winAmount / betAmount * 100 : 0;
+    const ggr = betAmount - winAmount;
+    return `<tr>
+      <td>${escapeHtml(row.date)}</td>
+      <td>${escapeHtml(betType.label)}</td>
+      <td>${formatCount(playerCount)}</td>
+      <td>${formatCount(spinCount)}</td>
+      <td>${formatCount(betAmount)}</td>
+      <td>${formatCount(winAmount)}</td>
+      <td>${rtp.toFixed(2)}%</td>
+      <td>${formatCount(ggr)}</td>
+    </tr>`;
+  })).join('');
+}
+
 function clearExpandedMonthlyCube() {
   document.querySelectorAll('.monthly-analysis-content .monthly-chart-panel.monthly-cube-expanded')
     .forEach(panel => panel.classList.remove('monthly-cube-expanded'));
@@ -2193,8 +2996,13 @@ function clearExpandedMonthlyCube() {
 document.querySelectorAll('.monthly-analysis-content .monthly-chart-panel').forEach(panel => {
   panel.addEventListener('click', () => {
     if (!['single', 'compare'].includes(monthlyModeSelect.value)) return;
+    if (panel.dataset.cubeWidth === '2') {
+      clearExpandedMonthlyCube();
+      return;
+    }
     document.querySelectorAll('.monthly-analysis-content .monthly-chart-panel').forEach(otherPanel => {
-      otherPanel.classList.toggle('monthly-cube-expanded', otherPanel === panel);
+      const canExpand = otherPanel.dataset.cubeWidth !== '2';
+      otherPanel.classList.toggle('monthly-cube-expanded', canExpand && otherPanel === panel);
     });
   });
 });
@@ -2234,6 +3042,11 @@ document.addEventListener('keydown', event => {
   const main = document.querySelector('main');
   let selectedOption = null;
   if (main.classList.contains('game-page')) {
+    if (gameDateModeSelect.value === 'single-day') {
+      (direction < 0 ? btnGamePreviousDay : btnGameNextDay).click();
+      event.preventDefault();
+      return;
+    }
     selectedOption = moveSelectByArrow(gameSlotSelect, direction);
     if (selectedOption) showNavigationToast(translations[currentLang].keyboardGameSwitch.replace('{value}', selectedOption.textContent));
   } else if (main.classList.contains('player-page')) {
@@ -2243,7 +3056,7 @@ document.addEventListener('keydown', event => {
   if (selectedOption) event.preventDefault();
 });
 
-function renderGameSpinDistribution(rows) {
+function renderGameSpinDistribution(rows, chartId = 'game-spin-distribution-chart') {
   const lang = translations[currentLang];
   const buckets = [
     ['dist_0_10', '[0,10)'], ['dist_10_20', '[10,20)'], ['dist_20_50', '[20,50)'],
@@ -2252,6 +3065,8 @@ function renderGameSpinDistribution(rows) {
   ];
   const colors = ['#38bdf8', '#6366f1', '#8b5cf6', '#a855f7', '#ec4899', '#f97316', '#eab308', '#10b981'];
   const dates = rows.map(row => row.date);
+  const hasMedian = rows.some(row => row.median_player_spin_count != null);
+  const singleMedian = hasMedian && rows.length === 1 ? Number(rows[0].median_player_spin_count) : null;
   const traces = buckets.map(([key, label], index) => ({
     x: dates,
     y: rows.map(row => Number(row[key] || 0) * 100),
@@ -2260,11 +3075,61 @@ function renderGameSpinDistribution(rows) {
     marker: { color: colors[index] },
     hovertemplate: `${label}: %{y:.2f}%<extra></extra>`
   }));
-  Plotly.newPlot('game-spin-distribution-chart', traces, monthlyChartLayout(lang.chartGameSpinDistribution, '%', {
+  if (hasMedian) {
+    traces.push({
+      x: dates,
+      y: rows.map(row => row.median_player_spin_count == null ? null : Number(row.median_player_spin_count)),
+      name: lang.chartMedianPlayerSpins,
+      type: 'scatter',
+      mode: 'lines+markers',
+      yaxis: 'y2',
+      line: { color: '#0f172a', width: 3 },
+      marker: { color: '#0f172a', size: 7 },
+      connectgaps: false,
+      hovertemplate: `${lang.chartMedianPlayerSpins}: %{y:,.1f}<extra></extra>`
+    });
+  }
+  Plotly.newPlot(chartId, traces, monthlyChartLayout(lang.chartGameSpinDistribution, '%', {
     barmode: 'stack',
     barnorm: 'percent',
-    yaxis: { range: [0, 100], ticksuffix: '%', title: '%' }
+    margin: { l: 55, r: 65, t: 48, b: 105 },
+    legend: {
+      orientation: 'h',
+      x: 0.5,
+      xanchor: 'center',
+      y: -0.28,
+      yanchor: 'top',
+      font: { color: '#475569' },
+      bgcolor: 'rgba(255, 255, 255, 0.9)'
+    },
+    yaxis: { range: [0, 100], ticksuffix: '%', title: '%' },
+    yaxis2: {
+      visible: hasMedian,
+      title: lang.chartMedianPlayerSpins,
+      overlaying: 'y',
+      side: 'right',
+      rangemode: 'tozero',
+      gridcolor: 'rgba(0,0,0,0)',
+      tickfont: { color: '#0f172a' }
+    },
+    shapes: singleMedian == null ? [] : [{
+      type: 'line', xref: 'paper', x0: 0, x1: 1,
+      yref: 'y2', y0: singleMedian, y1: singleMedian,
+      line: { color: '#0f172a', width: 3, dash: 'dash' }
+    }]
   }), { responsive: true, displaylogo: false, displayModeBar: false });
+}
+
+async function loadGameSpinMedians(startDate, endDate, slotId) {
+  const params = new URLSearchParams({
+    start_date: startDate,
+    end_date: endDate,
+    slot_id: slotId
+  });
+  const response = await fetch(`/api/game-spin-medians?${params}`);
+  const rows = await response.json();
+  if (!response.ok) throw new Error(rows.error || 'Game spin median API request failed');
+  return rows;
 }
 
 async function loadGameDateDefaults() {
@@ -2273,6 +3138,7 @@ async function loadGameDateDefaults() {
     const dates = await response.json();
     if (!Array.isArray(dates) || !dates.length) return;
     gameLatestAvailableDate = dates[0];
+    gameSingleDate.max = gameLatestAvailableDate;
     gameStartDate.max = gameLatestAvailableDate;
     gameEndDate.max = gameLatestAvailableDate;
     setGameDateMode();
@@ -2293,11 +3159,19 @@ function shiftGameDate(dateValue, dayOffset) {
 
 function setGameDateMode() {
   const mode = gameDateModeSelect.value;
+  gameSingleDateControls.hidden = mode !== 'single-day';
   gameCustomDateControls.hidden = mode !== 'custom';
   if (!gameLatestAvailableDate) return;
   if (mode === 'today') {
     gameStartDate.value = gameLatestAvailableDate;
     gameEndDate.value = gameLatestAvailableDate;
+  } else if (mode === 'yesterday') {
+    gameStartDate.value = shiftGameDate(gameLatestAvailableDate, -1);
+    gameEndDate.value = gameStartDate.value;
+  } else if (mode === 'single-day') {
+    if (!gameSingleDate.value) gameSingleDate.value = gameLatestAvailableDate;
+    gameStartDate.value = gameSingleDate.value;
+    gameEndDate.value = gameSingleDate.value;
   } else if (mode === 'seven-days') {
     gameStartDate.value = shiftGameDate(gameLatestAvailableDate, -6);
     gameEndDate.value = gameLatestAvailableDate;
@@ -2312,8 +3186,22 @@ async function loadGameData() {
   const endDate = gameEndDate.value;
   const selectedSlot = gameSlotSelect.value || 'ALL';
   const rankingRequestId = ++gameRankingRequestId;
+  const singleDay = startDate && startDate === endDate;
+  const requestedSingleDate = gameDateModeSelect.value === 'single-day' ? gameSingleDate.value : '';
+  const previousPanelState = requestedSingleDate ? {
+    spinDistribution: gameSpinDistributionPanel.hidden,
+    dailyBet: gameDailyBetPanel.hidden,
+    ranking: gameRankingPanel.hidden,
+    dauDnu: gameDauDnuPanel.hidden,
+    rtp: gameRtpPanel.hidden,
+    retention: gameRetentionPanel.hidden
+  } : null;
   gameSpinDistributionPanel.hidden = true;
+  gameDailyBetPanel.hidden = true;
   gameRankingPanel.hidden = true;
+  gameDauDnuPanel.hidden = singleDay;
+  gameRtpPanel.hidden = singleDay;
+  gameRetentionPanel.hidden = false;
   if (!startDate || !endDate) return;
   gameStatus.textContent = translations[currentLang].gameLoading;
   try {
@@ -2321,11 +3209,40 @@ async function loadGameData() {
     const rows = await response.json();
     if (!response.ok) throw new Error(rows.error || 'Game API request failed');
     if (!rows.length) {
+      if (requestedSingleDate) {
+        if (lastLoadedGameSingleDate && lastLoadedGameSingleDate !== requestedSingleDate) {
+          gameSingleDate.value = lastLoadedGameSingleDate;
+          gameStartDate.value = lastLoadedGameSingleDate;
+          gameEndDate.value = lastLoadedGameSingleDate;
+          saveUiState();
+        }
+        gameSpinDistributionPanel.hidden = previousPanelState.spinDistribution;
+        gameDailyBetPanel.hidden = previousPanelState.dailyBet;
+        gameRankingPanel.hidden = previousPanelState.ranking;
+        gameDauDnuPanel.hidden = previousPanelState.dauDnu;
+        gameRtpPanel.hidden = previousPanelState.rtp;
+        gameRetentionPanel.hidden = previousPanelState.retention;
+        gameStatus.textContent = translations[currentLang].gameNoData;
+        window.alert(translations[currentLang].gameDayNoData.replace('{date}', requestedSingleDate));
+        return;
+      }
       gameSpinDistributionCache = [];
       gameRankingCache = [];
+      gameDataCache = [];
+      gameDailyBetBody.innerHTML = '';
       gameStatus.textContent = translations[currentLang].gameNoData;
       return;
     }
+    if (requestedSingleDate) lastLoadedGameSingleDate = requestedSingleDate;
+    const hourlyParams = new URLSearchParams({
+      start_date: startDate,
+      end_date: endDate,
+      slot_id: selectedSlot
+    });
+    const hourlyResponse = await fetch(`/api/game-hourly-players?${hourlyParams}`);
+    const hourlyRows = await hourlyResponse.json();
+    if (!hourlyResponse.ok) throw new Error(hourlyRows.error || 'Game hourly players API request failed');
+    gameHourlyPlayersCache = hourlyRows;
     gameDataCache = rows;
     if (selectedSlot === 'ALL') {
       const games = new Map();
@@ -2355,7 +3272,8 @@ async function loadGameData() {
       }
     }
     updateGameMetrics(rows, selectedSlot);
-    renderGameCharts(rows, selectedSlot);
+    renderGameCharts(rows, selectedSlot, gameHourlyPlayersCache);
+    renderGameDailyBetStats(rows, selectedSlot);
     if (selectedSlot === 'ALL') {
       gameSpinDistributionCache = [];
       gameSpinDistributionPanel.hidden = true;
@@ -2372,6 +3290,19 @@ async function loadGameData() {
       gameSpinDistributionCache = rows;
       gameSpinDistributionPanel.hidden = false;
       renderGameSpinDistribution(rows);
+      loadGameSpinMedians(startDate, endDate, selectedSlot).then(medianRows => {
+        if (rankingRequestId !== gameRankingRequestId || gameSlotSelect.value !== selectedSlot) return;
+        const medianByDate = new Map(medianRows.map(row => [row.date, row.median_player_spin_count]));
+        gameSpinDistributionCache = rows.map(row => ({
+          ...row,
+          median_player_spin_count: medianByDate.has(row.date) ? medianByDate.get(row.date) : null
+        }));
+        renderGameSpinDistribution(gameSpinDistributionCache);
+      }).catch(error => {
+        if (rankingRequestId !== gameRankingRequestId) return;
+        console.error('Failed to load game spin medians:', error);
+        gameStatus.textContent = translations[currentLang].gameMedianLoadError.replace('{message}', error.message);
+      });
     }
     gameStatus.textContent = translations[currentLang].gameLoaded.replace('{start}', startDate).replace('{end}', endDate);
   } catch (error) {
@@ -2381,6 +3312,15 @@ async function loadGameData() {
 
 btnLoadMonthly.addEventListener('click', loadMonthlyData);
 monthlyMonthSelect.addEventListener('change', loadMonthlyData);
+[btnMonthlyPrevious, btnMonthlyNext].forEach((button, index) => {
+  button.addEventListener('click', () => {
+    const selectedMonth = monthlyMonthSelect.value || latestAvailableMonth;
+    const targetMonth = shiftMonth(selectedMonth, index === 0 ? -1 : 1);
+    if (!targetMonth) return;
+    monthlyMonthSelect.value = targetMonth;
+    monthlyMonthSelect.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+});
 monthlyModeSelect.addEventListener('change', () => {
   setMonthlyMode();
   loadMonthlyData();
@@ -2392,6 +3332,17 @@ btnLoadAgent.addEventListener('click', loadAgentAnalysis);
 agentParentSelect.addEventListener('change', () => {
   populateAgentSelect();
   saveUiState();
+  if (agentStartDate.value && agentEndDate.value) loadAgentAnalysis();
+});
+agentSelect.addEventListener('change', () => {
+  agentGameSelect.value = 'ALL';
+  updateAgentFilterVisibility();
+  saveUiState();
+  if (agentStartDate.value && agentEndDate.value) loadAgentAnalysis();
+});
+agentGameSelect.addEventListener('change', () => {
+  saveUiState();
+  if (agentAnalysisCache) renderAgentAnalysis(agentAnalysisCache);
 });
 gameSlotSelect.addEventListener('change', loadGameData);
 gameDateModeSelect.addEventListener('change', () => {
@@ -2399,6 +3350,20 @@ gameDateModeSelect.addEventListener('change', () => {
   saveUiState();
   if (gameLatestAvailableDate) loadGameData();
   else loadGameDateDefaults();
+});
+gameSingleDate.addEventListener('change', () => {
+  if (gameDateModeSelect.value !== 'single-day') return;
+  setGameDateMode();
+  saveUiState();
+  loadGameData();
+});
+[btnGamePreviousDay, btnGameNextDay].forEach((button, index) => {
+  button.addEventListener('click', () => {
+    const selectedDate = gameSingleDate.value || gameLatestAvailableDate;
+    if (!selectedDate) return;
+    gameSingleDate.value = shiftGameDate(selectedDate, index === 0 ? -1 : 1);
+    gameSingleDate.dispatchEvent(new Event('change', { bubbles: true }));
+  });
 });
 document.querySelectorAll('[data-ranking-key]').forEach(button => {
   button.addEventListener('click', () => {
@@ -2419,33 +3384,37 @@ document.querySelectorAll('[data-game-ranking-key]').forEach(button => {
   });
 });
 
-[monthlyModeSelect, monthlyMonthSelect, monthlyStartMonth, monthlyEndMonth, gameStartDate, gameEndDate, gameSlotSelect,
-  agentParentSelect, agentSelect, agentBetTypeSelect, agentStartDate, agentEndDate,
+[monthlyModeSelect, monthlyMonthSelect, monthlyStartMonth, monthlyEndMonth, gameSingleDate, gameStartDate, gameEndDate, gameSlotSelect,
+  agentParentSelect, agentSelect, agentGameSelect, agentStartDate, agentEndDate,
   dateModeSelect, dateSelect, dateStartSelect, dateEndSelect, minSpinsInput, maxSpinsInput,
   playerSelect, checkboxNewPlayer, checkboxOldPlayer, checkboxWinPlayer, checkboxLosePlayer,
   btnLangToggle].forEach(element => element.addEventListener('change', saveUiState));
 
 function restoreUiState() {
   restoredUiState = readUiState();
-  if (!restoredUiState) return 'player';
+  if (!restoredUiState) return 'home';
+  restoredUiState.activePage = 'home';
 
   if (restoredUiState.lang === 'en' || restoredUiState.lang === 'zh') currentLang = restoredUiState.lang;
   const monthly = restoredUiState.monthly || {};
   if (['single', 'compare', 'quarter', 'half-year', 'year'].includes(monthly.mode)) monthlyModeSelect.value = monthly.mode;
   if (monthly.month) monthlyMonthSelect.value = monthly.month;
+  lastLoadedMonthlyMonth = monthlyMonthSelect.value;
   if (monthly.startMonth) monthlyStartMonth.value = monthly.startMonth;
   if (monthly.endMonth) monthlyEndMonth.value = monthly.endMonth;
   setMonthlyMode();
 
   const game = restoredUiState.game || {};
-  if (['today', 'seven-days', 'custom'].includes(game.dateMode)) gameDateModeSelect.value = game.dateMode;
+  if (['today', 'yesterday', 'single-day', 'seven-days', 'custom'].includes(game.dateMode)) gameDateModeSelect.value = game.dateMode;
+  if (game.singleDate) gameSingleDate.value = game.singleDate;
+  lastLoadedGameSingleDate = gameSingleDate.value;
   if (game.startDate) gameStartDate.value = game.startDate;
   if (game.endDate) gameEndDate.value = game.endDate;
+  gameSingleDateControls.hidden = gameDateModeSelect.value !== 'single-day';
   gameCustomDateControls.hidden = gameDateModeSelect.value !== 'custom';
   pendingGameSlot = game.slot && game.slot !== 'ALL' ? String(game.slot) : '';
 
   const agent = restoredUiState.agent || {};
-  if (['ALL', '1', '2', '3'].includes(String(agent.betType))) agentBetTypeSelect.value = String(agent.betType);
   if (agent.startDate) agentStartDate.value = agent.startDate;
   if (agent.endDate) agentEndDate.value = agent.endDate;
 
@@ -2461,7 +3430,7 @@ function restoreUiState() {
     if (typeof player[key] === 'boolean') element.checked = player[key];
   });
 
-  return ['home', 'player', 'monthly', 'game', 'agent'].includes(restoredUiState.activePage) ? restoredUiState.activePage : 'player';
+  return 'home';
 }
 
 function renderMonthlyGameRanking() {
@@ -2493,7 +3462,7 @@ function renderMonthlyGameRanking() {
     return;
   }
   body.innerHTML = rows.map(row => `<tr>
-    <td>${String(row.game_name || row.slot_id || '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character])}</td>
+    <td><a href="#game-analysis" class="monthly-ranking-game-link">${escapeHtml(row.game_name || row.slot_id || '')}</a></td>
     <td>${formatCount(row.days)}</td>
     <td>${formatCount(row.player_count)}</td>
     <td>${Number(row.avg_spin_count || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -2503,12 +3472,33 @@ function renderMonthlyGameRanking() {
     <td>${formatCount(row.total_win_amount)}</td>
     <td>${formatCount(row.ggr)}</td>
   </tr>`).join('');
+  body.querySelectorAll('.monthly-ranking-game-link').forEach((link, index) => {
+    const game = rows[index];
+    const gameName = game.game_name || String(game.slot_id || '');
+    link.title = currentLang === 'zh'
+      ? `前往 ${gameName} 的遊戲績效分析`
+      : `Open game performance analysis for ${gameName}`;
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      gameDateModeSelect.value = 'custom';
+      setGameDateMode();
+      gameStartDate.value = monthlyGameRankingRange.startDate;
+      gameEndDate.value = monthlyGameRankingRange.endDate;
+      const slotId = String(game.slot_id);
+      const slotIsLoaded = Array.from(gameSlotSelect.options).some(option => option.value === slotId);
+      pendingGameSlot = slotIsLoaded ? '' : slotId;
+      gameSlotSelect.value = slotIsLoaded ? slotId : 'ALL';
+      setActivePage('game');
+      if (gameLatestAvailableDate) loadGameData();
+    });
+  });
 }
 
 async function loadMonthlyGameRanking(startDate, endDate) {
   const response = await fetch(`/api/game-ranking?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`);
   const rows = await response.json();
   if (!response.ok) throw new Error(rows.error || 'Game ranking API request failed');
+  monthlyGameRankingRange = { startDate, endDate };
   monthlyGameRankingCache = Array.isArray(rows) ? rows : [];
   renderMonthlyGameRanking();
 }
@@ -2578,14 +3568,29 @@ function initializeDashboard() {
   updateLanguageUI();
   loadAvailableDates();
   setActivePage(activePage);
+  startHomeAutoRefresh();
   if (activePage === 'monthly' && monthlyMonthSelect.value) loadMonthlyData();
 }
 
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || document.body.classList.contains('auth-locked') || homeContent.hidden) return;
+  if (Date.now() - homeDashboardLoadedAt >= HOME_REFRESH_INTERVAL_MS) {
+    loadHomeDashboard({ silent: true });
+  }
+});
+
 window.fetch = async (...args) => {
-  const response = await originalFetch(...args);
-  const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
-  if (response.status === 401 && !url.includes('/api/auth/')) showLoginScreen();
-  return response;
+  activeDataRequestCount += 1;
+  globalDataLoading.hidden = false;
+  try {
+    const response = await originalFetch(...args);
+    const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+    if (response.status === 401 && !url.includes('/api/auth/')) showLoginScreen();
+    return response;
+  } finally {
+    activeDataRequestCount = Math.max(0, activeDataRequestCount - 1);
+    globalDataLoading.hidden = activeDataRequestCount === 0;
+  }
 };
 
 loginForm.addEventListener('submit', async event => {

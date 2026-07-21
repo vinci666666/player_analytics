@@ -20,17 +20,29 @@ ANALYZE public.casino_retention;
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_player_id
 ON public.slot_parent_bet (player_id);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_bet_at_date
-ON public.slot_parent_bet ((bet_at::date));
+-- Enforces source-key uniqueness and supports the incremental cursor query:
+-- ORDER BY bet_at DESC, id DESC LIMIT 1.
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ux_slot_parent_bet_bet_at_id
+ON public.slot_parent_bet (bet_at, id);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_bet_at_player_id
-ON public.slot_parent_bet (bet_at, player_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_bet_at_utc7_date
+ON public.slot_parent_bet ((bet_at_utc7::date));
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_player_id_bet_at
-ON public.slot_parent_bet (player_id, bet_at);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_bet_at_utc7_player_id
+ON public.slot_parent_bet (bet_at_utc7, player_id);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_player_id_bet_at_utc7
+ON public.slot_parent_bet (player_id, bet_at_utc7);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_agent_player_bet_at_utc7
+ON public.slot_parent_bet (parent_agent_id, agent_id, player_id, bet_at_utc7);
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_player_daily_date_player
 ON public.player_daily (date, player_id);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_player_daily_player_date
+ON public.player_daily (player_id, date)
+INCLUDE (bet_1_spin_count, bet_2_spin_count, bet_3_spin_count);
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_game_retention_date_slot
 ON public.game_retention (date, slot_id);
@@ -41,14 +53,14 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_player_stats_first_spin_player
 ON public.player_stats (first_spin_date, player_id);
 
 -- 3) Optional covering index for player detail pages:
--- Query pattern: one player + date range + ORDER BY bet_at, selecting these
+-- Query pattern: one player + date range + ORDER BY bet_at_utc7, selecting these
 -- columns. This can reduce heap reads if the visibility map is healthy.
 --
--- Existing index idx_slot_parent_bet_player_id_bet_at is smaller. Keep both
+-- Existing index idx_slot_parent_bet_player_id_bet_at_utc7 is smaller. Keep both
 -- until EXPLAIN shows this covering index is used, then consider dropping the
 -- smaller duplicate in a separate maintenance window.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_player_bet_at_cover
-ON public.slot_parent_bet (player_id, bet_at)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_player_bet_at_utc7_cover
+ON public.slot_parent_bet (player_id, bet_at_utc7)
 INCLUDE (slot_id, bet_type, has_free_game, bet_amount, total_prize);
 
 -- 4) Optional covering index for filter/player-list pages:
@@ -56,10 +68,10 @@ INCLUDE (slot_id, bet_type, has_free_game, bet_amount, total_prize);
 -- filters. Including amount columns lets PostgreSQL calculate SUMs with fewer
 -- heap visits.
 --
--- Existing index idx_slot_parent_bet_bet_at_player_id is smaller. Keep both
+-- Existing index idx_slot_parent_bet_bet_at_utc7_player_id is smaller. Keep both
 -- until EXPLAIN confirms this covering index helps under your real filters.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_bet_at_player_cover
-ON public.slot_parent_bet (bet_at, player_id)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_slot_parent_bet_bet_at_utc7_player_cover
+ON public.slot_parent_bet (bet_at_utc7, player_id)
 INCLUDE (bet_amount, total_prize);
 
 -- 5) High-impact summary structure for filter/player-list queries.
@@ -68,14 +80,14 @@ INCLUDE (bet_amount, total_prize);
 CREATE MATERIALIZED VIEW IF NOT EXISTS public.player_daily_summary AS
 SELECT
     player_id,
-    bet_at::date AS play_date,
+    bet_at_utc7::date AS play_date,
     COUNT(*) AS spin_count,
     SUM(bet_amount) AS total_bet_amount,
     SUM(total_prize) AS total_prize,
     SUM(total_prize - bet_amount) AS net_profit,
     COUNT(*) FILTER (WHERE has_free_game) AS free_game_count
 FROM public.slot_parent_bet
-GROUP BY player_id, bet_at::date
+GROUP BY player_id, bet_at_utc7::date
 WITH NO DATA;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_player_daily_summary_date_player

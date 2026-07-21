@@ -2,10 +2,10 @@ WITH source_aggregated AS (
     SELECT 
         s.player_id,
         MAX(s.player_username) AS player_username,
-        MIN(s.bet_at)::date AS first_spin_date,
+        MIN(s.bet_at_utc7)::date AS first_spin_date,
         COALESCE(SUM(s.bet_amount), 0) AS total_bet_amount,
         COALESCE(SUM(s.total_prize), 0) AS total_win_amount,
-        MAX(s.bet_at) AS last_spin_at
+        MAX(s.bet_at_utc7) AS last_spin_at
     FROM public.slot_parent_bet s
     GROUP BY s.player_id
 )

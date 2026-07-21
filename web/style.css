@@ -151,7 +151,7 @@ main {
   }
 
   .page-navigation { position: static; }
-  .page-nav-list { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .page-nav-list { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
   .page-nav-item { justify-content: center; }
   .monthly-analysis-content { grid-column: 1; }
   main.monthly-page { grid-template-columns: 1fr; }
@@ -270,7 +270,38 @@ body.auth-locked .login-screen {
 }
 .navigation-toast.visible { opacity: 1; transform: translate(-50%, 0); }
 
+.global-data-loading {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(99, 102, 241, 0.28);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  font-weight: 600;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
+  transform: translateX(-50%);
+}
+.global-data-loading[hidden] { display: none; }
+.global-data-loading-spinner {
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 2px solid rgba(99, 102, 241, 0.25);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: global-data-loading-spin 0.75s linear infinite;
+}
+@keyframes global-data-loading-spin { to { transform: rotate(360deg); } }
+body.auth-locked > .global-data-loading { display: none; }
+
 main.player-page { grid-template-columns: 210px minmax(0, 1fr); row-gap: 0.75rem; }
+main.player-page .page-navigation { grid-column: 1; grid-row: 1 / span 2; }
 main.player-page .control-sidebar { grid-column: 2; grid-row: 1; }
 main.player-page .analytics-content { grid-column: 2; grid-row: 2; }
 .player-filter-panel {
@@ -300,6 +331,7 @@ main.player-page .analytics-content { grid-column: 2; grid-row: 2; }
 
 @media (max-width: 1024px) {
   main.player-page { grid-template-columns: 1fr; }
+  main.player-page .page-navigation { grid-column: 1; grid-row: auto; }
   main.player-page .control-sidebar, main.player-page .analytics-content { grid-column: 1; }
   main.player-page .control-sidebar { grid-row: auto; }
   main.player-page .analytics-content { grid-row: auto; }
@@ -440,11 +472,18 @@ select.form-control {
 .home-kpi-delta.negative { color: var(--danger); }
 .home-chart-panel { padding: 0.75rem; }
 .home-ggr-chart { height: 360px; }
+.home-wide-cube { grid-column: 1 / -1; }
 .home-two-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .home-table-panel { min-width: 0; padding: 1rem; }
 .home-table-panel h4 { margin-bottom: 0.65rem; font-size: 0.92rem; color: var(--text-primary); }
 .home-table-panel .monthly-ranking-table { font-size: 0.78rem; }
 .home-table-panel .monthly-ranking-table th, .home-table-panel .monthly-ranking-table td { padding: 0.55rem 0.5rem; }
+.home-ranking-link-row { cursor: pointer; transition: background-color 0.15s ease, box-shadow 0.15s ease; }
+.home-ranking-link-row:hover { background: rgba(99,102,241,0.1) !important; }
+.home-ranking-link-row:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; background: rgba(99,102,241,0.1); }
+.monthly-ranking-game-link { color: var(--primary); font-weight: 700; text-decoration: none; }
+.monthly-ranking-game-link:hover { text-decoration: underline; }
+.monthly-ranking-game-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 2px; }
 .home-agent-performance-panel { padding: 1rem; border-color: rgba(99, 102, 241, 0.22); }
 .home-agent-performance-panel > .home-two-column > .panel { background: rgba(255, 255, 255, 0.52); }
 .home-agent-chart { min-height: 320px; }
@@ -452,15 +491,63 @@ select.form-control {
 .game-analysis-content[hidden] { display: none; }
 .agent-analysis-content { grid-column: 2 / -1; display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
 .agent-analysis-content[hidden] { display: none; }
+.single-player-analysis-content { grid-column: 2; min-width: 0; }
+.single-player-analysis-content[hidden] { display: none; }
+.single-player-toolbar { display: flex; flex-direction: column; gap: 1rem; }
+.single-player-controls { display: grid; grid-template-columns: minmax(220px, 1.5fr) repeat(2, minmax(160px, 1fr)) auto; gap: 0.85rem; align-items: end; }
+.single-player-controls .form-group { margin: 0; }
+.single-player-controls .btn-primary { min-height: 43px; white-space: nowrap; }
+.single-player-analysis-content.is-loading .single-player-toolbar { border-color: rgba(99, 102, 241, 0.45); }
+.single-player-analysis-content.is-loading .monthly-status {
+  color: var(--primary);
+  font-weight: 700;
+}
+.single-player-analysis-content.is-loading .monthly-status::before {
+  content: '';
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-right: 0.5rem;
+  border: 2px solid rgba(99, 102, 241, 0.25);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  vertical-align: -0.08rem;
+  animation: single-player-spin 0.75s linear infinite;
+}
+@keyframes single-player-spin { to { transform: rotate(360deg); } }
 .agent-filter-controls { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 0.55rem 0.8rem; align-items: end; }
 .agent-filter-controls label { color: var(--text-secondary); font-size: 0.72rem; }
 .agent-filter-controls .btn-primary { grid-column: span 2; }
+.agent-filter-controls [hidden] { display: none; }
+.agent-charts-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.agent-charts-grid[hidden] { display: none; }
+#agent-game-performance { display: flex; flex-direction: column; gap: 1rem; }
+#agent-game-performance[hidden] { display: none; }
 .monthly-toolbar { display: flex; justify-content: space-between; align-items: end; gap: 1.5rem; }
 .game-toolbar { display: flex; justify-content: space-between; align-items: end; gap: 1.5rem; }
 .monthly-page-title { margin-top: 0.25rem; font-size: 1.35rem; }
 .monthly-page-description { color: var(--text-secondary); font-size: 0.85rem; margin-top: 0.15rem; }
 .monthly-date-controls { display: flex; align-items: end; gap: 0.6rem; flex-wrap: wrap; }
 .monthly-control-field { display: flex; flex-direction: column; gap: 0.35rem; }
+.monthly-control-field[hidden] { display: none; }
+.monthly-month-navigation { display: flex; align-items: center; gap: 0.4rem; }
+.game-day-navigation { display: flex; align-items: center; gap: 0.4rem; }
+.monthly-month-nav-button {
+  min-height: 36px;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--panel-bg);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--transition-speed);
+}
+.monthly-month-nav-button:hover { border-color: var(--primary); color: var(--primary); }
+.monthly-month-nav-button:active { transform: translateY(1px); }
+.monthly-month-nav-button[hidden] { display: none; }
 .monthly-compare-controls { display: flex; align-items: end; gap: 0.6rem; }
 .monthly-compare-controls[hidden] { display: none; }
 .monthly-range-separator { color: var(--text-secondary); padding-bottom: 0.65rem; }
@@ -488,6 +575,11 @@ select.form-control {
   background: #ffffff;
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22), 0 0 0 1px rgba(99, 102, 241, 0.35);
 }
+[data-cube-width="2"] { cursor: default !important; }
+[data-cube-width="2"].monthly-cube-expanded {
+  transform: none !important;
+  box-shadow: none !important;
+}
 .monthly-chart { height: 330px; }
 .monthly-ranking-panel { grid-column: 1 / -1; min-width: 0; }
 .monthly-ranking-title { margin: 0 0 0.75rem; font-size: 1rem; }
@@ -500,6 +592,9 @@ select.form-control {
 .monthly-ranking-table th button:hover, .monthly-ranking-table th button.active { color: var(--text-primary); }
 .ranking-header-total { display: block; margin-top: 0.2rem; color: var(--text-primary); font-family: var(--font-mono); font-size: 0.78rem; }
 .monthly-ranking-table tbody tr:hover { background: rgba(99,102,241,0.055); }
+.table-empty-message { text-align: center !important; color: var(--text-secondary); padding: 2rem !important; }
+.game-daily-bet-table tbody tr:nth-child(3n + 1) td { border-top: 2px solid rgba(99,102,241,0.18); }
+.game-daily-bet-table tbody tr:first-child td { border-top: 0; }
 .monthly-status { min-height: 1.25rem; color: var(--text-secondary); font-size: 0.85rem; }
 main.monthly-page .control-sidebar, main.monthly-page .analytics-content { display: none; }
 main.monthly-page { grid-template-columns: 210px 1fr; }
@@ -507,19 +602,31 @@ main.game-page .control-sidebar, main.game-page .analytics-content { display: no
 main.game-page { grid-template-columns: 210px 1fr; }
 main.agent-page .control-sidebar, main.agent-page .analytics-content { display: none; }
 main.agent-page { grid-template-columns: 210px 1fr; }
+main.single-player-page { grid-template-columns: 210px minmax(0, 1fr); row-gap: 1.25rem; }
+main.single-player-page .page-navigation { grid-column: 1; grid-row: 1 / span 2; }
+main.single-player-page .control-sidebar { display: none; }
+main.single-player-page .single-player-analysis-content { grid-column: 2; grid-row: 1; }
+main.single-player-page .analytics-content { grid-column: 2; grid-row: 2; }
 main.home-page .control-sidebar, main.home-page .analytics-content { display: none; }
 main.home-page { grid-template-columns: 210px 1fr; }
 
 @media (max-width: 1024px) {
   .home-analysis-content { grid-column: 1; }
   main.home-page { grid-template-columns: 1fr; }
+  main.single-player-page { grid-template-columns: 1fr; }
+  main.single-player-page .page-navigation { grid-column: 1; grid-row: auto; }
+  main.single-player-page .single-player-analysis-content,
+  main.single-player-page .analytics-content { grid-column: 1; }
+  .single-player-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .home-two-column { grid-template-columns: 1fr; }
   .agent-filter-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .agent-charts-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 700px) {
   .home-hero { align-items: stretch; flex-direction: column; }
   .home-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .single-player-controls { grid-template-columns: 1fr; }
 }
 
 /* Metric Cards Grid */

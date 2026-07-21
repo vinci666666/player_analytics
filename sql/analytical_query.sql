@@ -1,7 +1,7 @@
 -- iGaming Player Betting Behavior & Financial Curve Analysis Query
 -- Database Target Table: public.slot_parent_bet
 -- Key logic:
---   1. Time Partitioning per day (bet_at::date). Cumulative values and sequence indices reset daily.
+--   1. Time Partitioning per day (bet_at_utc7::date). Cumulative values and sequence indices reset daily.
 --   2. Play Sequence Numbering (1-based chronological index).
 --   3. Game Switching (is_game_changed is true when slot_id changes from previous spin).
 --   4. Daily Cumulative Profit (daily_cum_profit = sum of net_profit per day, in IDR).
@@ -9,8 +9,8 @@
 WITH partitioned_data AS (
     SELECT 
         player_id,
-        bet_at,
-        bet_at::date AS play_date,
+        bet_at_utc7,
+        bet_at_utc7::date AS play_date,
         slot_id,
         has_free_game,
         bet_amount,
@@ -19,13 +19,13 @@ WITH partitioned_data AS (
         (total_prize - bet_amount) AS net_profit,
         -- Get the slot_id from the immediate previous spin of the same player on the same day
         LAG(slot_id) OVER(
-            PARTITION BY player_id, bet_at::date 
-            ORDER BY bet_at ASC
+            PARTITION BY player_id, bet_at_utc7::date
+            ORDER BY bet_at_utc7 ASC
         ) AS prev_slot_id,
         -- Assign a 1-based sequential index chronologically per day for the player
         ROW_NUMBER() OVER(
-            PARTITION BY player_id, bet_at::date 
-            ORDER BY bet_at ASC
+            PARTITION BY player_id, bet_at_utc7::date
+            ORDER BY bet_at_utc7 ASC
         ) AS play_seq
     FROM 
         public.slot_parent_bet
@@ -33,7 +33,7 @@ WITH partitioned_data AS (
 analyzed_data AS (
     SELECT
         player_id,
-        bet_at,
+        bet_at_utc7,
         play_date,
         slot_id,
         has_free_game,
@@ -52,7 +52,7 @@ analyzed_data AS (
         -- We specify ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW to force physical row accumulation
         SUM(net_profit) OVER(
             PARTITION BY player_id, play_date 
-            ORDER BY bet_at ASC
+            ORDER BY bet_at_utc7 ASC
             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         ) AS daily_cum_profit
     FROM 
@@ -60,7 +60,7 @@ analyzed_data AS (
 )
 SELECT 
     player_id,
-    bet_at,
+    bet_at_utc7,
     play_date,
     slot_id,
     has_free_game,

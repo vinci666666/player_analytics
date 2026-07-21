@@ -6,7 +6,7 @@
   <title>iGaming Operations Analytics Platform</title>
   <link rel="stylesheet" href="style.css">
   <!-- Load Plotly.js for premium interactive chart rendering -->
-  <script src="https://cdn.plot.ly/plotly-2.24.1.min.js" charset="utf-8"></script>
+  <script defer src="https://cdn.plot.ly/plotly-2.24.1.min.js" charset="utf-8"></script>
 </head>
 <body class="auth-locked">
 
@@ -49,6 +49,7 @@
         <a class="page-nav-item" href="#" data-page="monthly"><span class="page-nav-icon" aria-hidden="true">▣</span><span id="page-nav-monthly">月度營運分析</span></a>
         <a class="page-nav-item" href="#" data-page="game"><span class="page-nav-icon" aria-hidden="true">◆</span><span id="page-nav-game">遊戲績效分析</span></a>
         <a class="page-nav-item" href="#" data-page="agent"><span class="page-nav-icon" aria-hidden="true">◎</span><span id="page-nav-agent">Agent 分析</span></a>
+        <a class="page-nav-item" href="#single-player-analysis" data-page="single-player"><span class="page-nav-icon" aria-hidden="true">⌕</span><span id="page-nav-single-player">單獨玩家分析</span></a>
         <a class="page-nav-item active" href="#player-analysis" data-page="player" aria-current="page"><span class="page-nav-icon" aria-hidden="true">♙</span><span id="page-nav-player">玩家行為分析</span></a>
       </nav>
     </aside>
@@ -182,7 +183,9 @@
         </div>
       </section>
 
-      <div class="panel home-chart-panel"><div id="home-ggr-chart" class="home-ggr-chart"></div></div>
+      <div class="panel home-chart-panel" data-cube-width="2"><div id="home-ggr-chart" class="home-ggr-chart"></div></div>
+
+      <div class="panel home-chart-panel home-wide-cube" data-cube-width="2"><div id="home-hourly-spins-chart" class="home-ggr-chart"></div></div>
 
       <section class="home-section">
         <div class="home-section-heading"><h3 id="home-game-ranking-title">遊戲績效排名</h3></div>
@@ -235,7 +238,11 @@
           </div>
           <div id="monthly-single-controls" class="monthly-control-field">
             <label id="monthly-label-month" for="monthly-month-select">分析月份</label>
-            <input id="monthly-month-select" class="form-control" type="month">
+            <div class="monthly-month-navigation">
+              <button id="btn-monthly-previous" class="monthly-month-nav-button" type="button">前一個月</button>
+              <input id="monthly-month-select" class="form-control" type="month">
+              <button id="btn-monthly-next" class="monthly-month-nav-button" type="button">下一個月</button>
+            </div>
           </div>
           <div id="monthly-compare-controls" class="monthly-compare-controls" hidden>
             <div class="monthly-control-field">
@@ -267,12 +274,13 @@
         <div class="panel monthly-chart-panel"><div id="monthly-rtp-chart" class="monthly-chart"></div></div>
         <div class="panel monthly-chart-panel"><div id="monthly-ggr-chart" class="monthly-chart"></div></div>
         <div class="panel monthly-chart-panel"><div id="monthly-player-chart" class="monthly-chart"></div></div>
+        <div id="monthly-dnu-panel" class="panel monthly-chart-panel" hidden><div id="monthly-dnu-chart" class="monthly-chart"></div></div>
         <div class="panel monthly-chart-panel"><div id="monthly-dnu-rate-chart" class="monthly-chart"></div></div>
         <div class="panel monthly-chart-panel"><div id="monthly-retention-chart" class="monthly-chart"></div></div>
         <div id="monthly-bet-type-panel" class="panel monthly-chart-panel"><div id="monthly-bet-type-chart" class="monthly-chart"></div></div>
         <div id="monthly-retention-3-panel" class="panel monthly-chart-panel" hidden><div id="monthly-retention-3-chart" class="monthly-chart"></div></div>
         <div id="monthly-retention-7-panel" class="panel monthly-chart-panel" hidden><div id="monthly-retention-7-chart" class="monthly-chart"></div></div>
-        <div id="monthly-game-ranking-panel" class="panel monthly-chart-panel monthly-ranking-panel">
+        <div id="monthly-game-ranking-panel" class="panel monthly-chart-panel monthly-ranking-panel" data-cube-width="2">
           <h3 id="monthly-game-ranking-title" class="monthly-ranking-title">時間範圍內遊戲排名</h3>
           <div class="monthly-ranking-table-wrap">
             <table class="monthly-ranking-table">
@@ -309,9 +317,19 @@
           <label id="game-label-date-mode" for="game-date-mode-select">時間範圍</label>
           <select id="game-date-mode-select" class="form-control">
             <option id="game-date-mode-today" value="today">今日</option>
+            <option id="game-date-mode-yesterday" value="yesterday">昨日</option>
+            <option id="game-date-mode-single-day" value="single-day">指定單日</option>
             <option id="game-date-mode-seven-days" value="seven-days">近 7 日（包含今日）</option>
             <option id="game-date-mode-custom" value="custom">任意範圍</option>
           </select>
+          <div id="game-single-date-controls" class="game-custom-date-controls" hidden>
+            <label id="game-label-single-date" for="game-single-date">分析日期</label>
+            <div class="game-day-navigation">
+              <button id="btn-game-previous-day" class="monthly-month-nav-button" type="button">前一日</button>
+              <input id="game-single-date" class="form-control" type="date">
+              <button id="btn-game-next-day" class="monthly-month-nav-button" type="button">後一日</button>
+            </div>
+          </div>
           <div id="game-custom-date-controls" class="game-custom-date-controls" hidden>
             <label id="game-label-start-date" for="game-start-date">開始日期</label>
             <input id="game-start-date" class="form-control" type="date">
@@ -336,11 +354,30 @@
       <div class="monthly-charts-grid">
         <div class="panel monthly-chart-panel"><div id="game-player-chart" class="monthly-chart"></div></div>
         <div class="panel monthly-chart-panel"><div id="game-ggr-chart" class="monthly-chart"></div></div>
-        <div class="panel monthly-chart-panel"><div id="game-rtp-chart" class="monthly-chart"></div></div>
-        <div class="panel monthly-chart-panel"><div id="game-retention-chart" class="monthly-chart"></div></div>
+        <div id="game-dau-dnu-panel" class="panel monthly-chart-panel" hidden><div id="game-dau-dnu-chart" class="monthly-chart"></div></div>
+        <div id="game-rtp-panel" class="panel monthly-chart-panel"><div id="game-rtp-chart" class="monthly-chart"></div></div>
+        <div id="game-retention-panel" class="panel monthly-chart-panel"><div id="game-retention-chart" class="monthly-chart"></div></div>
         <div class="panel monthly-chart-panel"><div id="game-bet-type-chart" class="monthly-chart"></div></div>
         <div id="game-spin-distribution-panel" class="panel monthly-chart-panel" hidden><div id="game-spin-distribution-chart" class="monthly-chart"></div></div>
-        <div id="game-ranking-panel" class="panel monthly-chart-panel monthly-ranking-panel" hidden>
+        <div id="game-daily-bet-panel" class="panel monthly-chart-panel monthly-ranking-panel" data-cube-width="2" hidden>
+          <h3 id="game-daily-bet-title" class="monthly-ranking-title">單一遊戲每日 Bet 統計</h3>
+          <div class="monthly-ranking-table-wrap">
+            <table class="monthly-ranking-table game-daily-bet-table">
+              <thead><tr>
+                <th id="game-daily-bet-date">日期</th>
+                <th id="game-daily-bet-type">Bet 類型</th>
+                <th id="game-daily-bet-players">玩家數</th>
+                <th id="game-daily-bet-spins">Spin 數</th>
+                <th id="game-daily-bet-amount">投注額（IDR）</th>
+                <th id="game-daily-win-amount">派彩額（IDR）</th>
+                <th id="game-daily-bet-rtp">RTP</th>
+                <th id="game-daily-bet-ggr">GGR（IDR）</th>
+              </tr></thead>
+              <tbody id="game-daily-bet-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="game-ranking-panel" class="panel monthly-chart-panel monthly-ranking-panel" data-cube-width="2" hidden>
           <h3 id="game-ranking-title" class="monthly-ranking-title">時間範圍內遊戲排名</h3>
           <div class="monthly-ranking-table-wrap">
             <table class="monthly-ranking-table">
@@ -374,10 +411,10 @@
         <div class="agent-filter-controls">
           <label for="agent-parent-select">Parent Agent</label>
           <select id="agent-parent-select" class="form-control"><option value="ALL">全部</option></select>
-          <label for="agent-select">Agent</label>
+          <label id="agent-label-agent" for="agent-select">Agent</label>
           <select id="agent-select" class="form-control"><option value="ALL">全部</option></select>
-          <label for="agent-bet-type-select">Bet Type</label>
-          <select id="agent-bet-type-select" class="form-control"><option value="ALL">全部</option><option value="1">Normal Bet</option><option value="2">Ante Bet</option><option value="3">Buy Feature</option></select>
+          <label id="agent-label-game" for="agent-game-select" hidden>遊戲</label>
+          <select id="agent-game-select" class="form-control" hidden><option value="ALL">全部遊戲</option></select>
           <label for="agent-start-date">開始日期</label>
           <input id="agent-start-date" class="form-control" type="date">
           <label for="agent-end-date">結束日期</label>
@@ -386,15 +423,71 @@
         </div>
       </div>
 
-      <div class="panel monthly-ranking-panel">
-        <h3 class="monthly-ranking-title">Cube</h3>
-        <div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Parent Agent / Agent</th><th>Player Count</th><th>DNU</th><th>Spin Count</th><th>Total Bet</th><th>Total Win</th><th>GGR</th></tr></thead><tbody id="agent-cube-body"></tbody></table></div>
+      <div id="agent-overview-charts" class="agent-charts-grid">
+        <div class="panel monthly-chart-panel"><div id="agent-spin-chart" class="monthly-chart"></div></div>
+        <div class="panel monthly-chart-panel"><div id="agent-ggr-chart" class="monthly-chart"></div></div>
       </div>
-      <div class="panel monthly-ranking-panel">
-        <h3 class="monthly-ranking-title">Details</h3>
-        <div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>Date</th><th>Parent Agent / Agent</th><th>Bet Type</th><th>Player Count</th><th>Total Bet</th><th>Total Win</th><th>GGR</th></tr></thead><tbody id="agent-details-body"></tbody></table></div>
+      <div id="agent-game-summary-panel" class="panel monthly-ranking-panel" data-cube-width="2" hidden>
+        <h3 id="agent-game-summary-title" class="monthly-ranking-title">遊戲彙總</h3>
+        <div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead><tr><th>遊戲</th><th>Total Spin</th><th>Bet Amount</th><th>Win Amount</th><th>GGR</th></tr></thead><tbody id="agent-game-summary-body"></tbody></table></div>
+      </div>
+      <div id="agent-details-panel" class="panel monthly-ranking-panel" data-cube-width="2">
+        <h3 id="agent-details-title" class="monthly-ranking-title">每日明細</h3>
+        <div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table"><thead id="agent-details-head"></thead><tbody id="agent-details-body"></tbody></table></div>
+      </div>
+      <div id="agent-game-performance" hidden>
+        <div class="monthly-metrics-grid">
+          <div class="metric-card"><span class="metric-label">平均玩家數</span><span id="agent-game-avg-players" class="metric-value">--</span></div>
+          <div class="metric-card"><span class="metric-label">平均 DNU</span><span id="agent-game-avg-dnu" class="metric-value">--</span></div>
+          <div class="metric-card"><span class="metric-label">平均 RTP</span><span id="agent-game-avg-rtp" class="metric-value">--</span></div>
+          <div class="metric-card"><span class="metric-label">總 Spin 數</span><span id="agent-game-total-spins" class="metric-value">--</span></div>
+          <div class="metric-card"><span class="metric-label">總投注額 · IDR</span><span id="agent-game-total-bet" class="metric-value">--</span></div>
+          <div class="metric-card"><span class="metric-label">總派彩額 · IDR</span><span id="agent-game-total-win" class="metric-value">--</span></div>
+          <div class="metric-card"><span class="metric-label">總 GGR · IDR</span><span id="agent-game-total-ggr" class="metric-value">--</span></div>
+          <div class="metric-card"><span class="metric-label">資料天數</span><span id="agent-game-days" class="metric-value">--</span></div>
+        </div>
+        <div class="monthly-charts-grid">
+          <div class="panel monthly-chart-panel"><div id="agent-game-player-chart" class="monthly-chart"></div></div>
+          <div class="panel monthly-chart-panel"><div id="agent-game-ggr-chart" class="monthly-chart"></div></div>
+          <div id="agent-game-dau-dnu-panel" class="panel monthly-chart-panel"><div id="agent-game-dau-dnu-chart" class="monthly-chart"></div></div>
+          <div id="agent-game-rtp-panel" class="panel monthly-chart-panel"><div id="agent-game-rtp-chart" class="monthly-chart"></div></div>
+          <div id="agent-game-retention-panel" class="panel monthly-chart-panel"><div id="agent-game-retention-chart" class="monthly-chart"></div></div>
+          <div class="panel monthly-chart-panel"><div id="agent-game-bet-type-chart" class="monthly-chart"></div></div>
+          <div id="agent-game-spin-distribution-panel" class="panel monthly-chart-panel"><div id="agent-game-spin-distribution-chart" class="monthly-chart"></div></div>
+          <div id="agent-game-daily-bet-panel" class="panel monthly-chart-panel monthly-ranking-panel" data-cube-width="2">
+            <h3 class="monthly-ranking-title">單一遊戲每日 Bet 統計</h3>
+            <div class="monthly-ranking-table-wrap"><table class="monthly-ranking-table game-daily-bet-table"><thead><tr><th>日期</th><th>Bet 類型</th><th>玩家數</th><th>Spin 數</th><th>投注額（IDR）</th><th>派彩額（IDR）</th><th>RTP</th><th>GGR（IDR）</th></tr></thead><tbody id="agent-game-daily-bet-body"></tbody></table></div>
+          </div>
+        </div>
       </div>
       <p id="agent-status" class="monthly-status" role="status"></p>
+    </div>
+
+    <!-- Single Player Analysis -->
+    <div id="single-player-analysis-content" class="single-player-analysis-content" hidden>
+      <div class="single-player-toolbar panel">
+        <div class="single-player-heading">
+          <span id="single-player-eyebrow" class="page-navigation-eyebrow">PLAYER LOOKUP</span>
+          <h2 id="single-player-page-title" class="monthly-page-title">單獨玩家分析</h2>
+          <p id="single-player-page-description" class="monthly-page-description">輸入玩家名稱與時間範圍，查看押注趨勢與每筆押注明細。</p>
+        </div>
+        <form id="single-player-form" class="single-player-controls">
+          <div class="form-group">
+            <label id="single-player-name-label" for="single-player-name">玩家名稱</label>
+            <input id="single-player-name" class="form-control" type="text" autocomplete="off" placeholder="輸入完整玩家名稱" required>
+          </div>
+          <div class="form-group">
+            <label id="single-player-start-label" for="single-player-start-date">開始日期</label>
+            <input id="single-player-start-date" class="form-control" type="date" required>
+          </div>
+          <div class="form-group">
+            <label id="single-player-end-label" for="single-player-end-date">結束日期</label>
+            <input id="single-player-end-date" class="form-control" type="date" required>
+          </div>
+          <button id="btn-load-single-player" class="btn-primary" type="submit">查詢玩家</button>
+        </form>
+        <p id="single-player-status" class="monthly-status" role="status" aria-live="polite"></p>
+      </div>
     </div>
 
     <!-- Right Column: Visual Dashboard -->
@@ -467,6 +560,27 @@
         </div>
       </div>
 
+      <!-- Game Wager Summary -->
+      <div class="panel">
+        <h2 id="game-wager-summary-title" class="panel-title">遊戲投注紀錄</h2>
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th id="game-wager-th-game">遊戲</th>
+                <th id="game-wager-th-type">投注方式</th>
+                <th>Total Spin</th>
+                <th>Total Bet</th>
+                <th>Total Win</th>
+              </tr>
+            </thead>
+            <tbody id="game-wager-summary-body">
+              <tr><td colspan="5" class="table-empty-message">尚未載入資料</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- Detail Table Panel -->
       <div class="panel">
         <h2 id="table-panel-title" class="panel-title">📊 投注序列明細</h2>
@@ -475,7 +589,7 @@
             <thead>
               <tr>
                 <th id="th-seq">Play Seq</th>
-                <th id="th-time">Timestamp (bet_at)</th>
+                <th id="th-time">Timestamp (bet_at_utc7)</th>
                 <th id="th-slot">遊戲名稱</th>
                 <th id="th-bet-type">Bet Type</th>
                 <th id="th-switch">Game Switch?</th>
@@ -499,6 +613,10 @@
     </div>
   </main>
 
+  <div id="global-data-loading" class="global-data-loading" role="status" aria-live="polite" hidden>
+    <span class="global-data-loading-spinner" aria-hidden="true"></span>
+    <span id="global-data-loading-message">正在搜尋或載入資料…</span>
+  </div>
   <div id="navigation-toast" class="navigation-toast" role="status" aria-live="polite"></div>
 
   <script type="module" src="app.js"></script>

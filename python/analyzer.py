@@ -18,7 +18,7 @@ def generate_mock_data():
     
     for seq in range(32):
         # 每隔大約 35 秒進行一次旋轉
-        bet_at = base_time + pd.Timedelta(seconds=seq * 35 + np.random.randint(-10, 10))
+        bet_at_utc7 = base_time + pd.Timedelta(seconds=seq * 35 + np.random.randint(-10, 10))
         if seq == 15:
             current_slot = 7002  # 在第 15 次旋轉時模擬切換遊戲
         has_free_game = 22 <= seq <= 26  # 模擬觸發免費遊戲區間
@@ -33,7 +33,7 @@ def generate_mock_data():
             
         records.append({
             'player_id': player_id,
-            'bet_at': bet_at,
+            'bet_at_utc7': bet_at_utc7,
             'slot_id': current_slot,
             'bet_type': 1 if not has_free_game else 3,  # 模擬投注類型 (1: 一般, 3: 特色)
             'has_free_game': has_free_game,
@@ -89,7 +89,7 @@ def load_data_from_db(player_id=None, date_filter=None):
     query = """
     SELECT 
         player_id, 
-        bet_at, 
+        bet_at_utc7,
         slot_id, 
         bet_type,
         has_free_game, 
@@ -108,13 +108,13 @@ def load_data_from_db(player_id=None, date_filter=None):
         params.append(player_id)
         
     if date_filter:
-        conditions.append("bet_at::date = %s")
+        conditions.append("bet_at_utc7::date = %s")
         params.append(date_filter)
         
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
         
-    query += " ORDER BY bet_at ASC;"
+    query += " ORDER BY bet_at_utc7 ASC;"
     
     print(f"正在從 public.slot_parent_bet 讀取資料 (過濾條件: player_id={player_id}, date={date_filter})...")
     df = pd.read_sql_query(query, conn, params=params)
@@ -132,14 +132,14 @@ def analyze_player_data(df):
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0).astype(float)
             
     # 處理時間戳記與日期分區
-    df['bet_at'] = pd.to_datetime(df['bet_at'])
+    df['bet_at_utc7'] = pd.to_datetime(df['bet_at_utc7'])
     if not df.empty:
-        df['play_date'] = df['bet_at'].dt.date
+        df['play_date'] = df['bet_at_utc7'].dt.date
     else:
         df['play_date'] = pd.Series(dtype='object')
     
     # 按玩家、日期及時間升序排序，確保視窗函數邏輯正確
-    df = df.sort_values(by=['player_id', 'play_date', 'bet_at']).reset_index(drop=True)
+    df = df.sort_values(by=['player_id', 'play_date', 'bet_at_utc7']).reset_index(drop=True)
     
     # 1. 投注序號 (針對個別玩家與日期分區編號，從 1 開始)
     df['play_seq'] = df.groupby(['player_id', 'play_date']).cumcount() + 1
@@ -220,7 +220,7 @@ def generate_interactive_chart(df, player_id=888001, date_filter=None, output_pa
             p_df['bet_amount_fmt'],
             p_df['total_prize_fmt'],
             p_df['slot_id'],
-            p_df['bet_at'].dt.strftime('%H:%M:%S'),
+            p_df['bet_at_utc7'].dt.strftime('%H:%M:%S'),
             p_df['bet_type_name']
         ), axis=-1),
         hovertemplate=(

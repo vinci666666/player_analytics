@@ -5,7 +5,7 @@ INSERT INTO player_daily (
     bet_3_spin_count, total_bet_3_amount, total_win_3_amount, bet_3_rtp, bet_3_odd_rtp
 )
 SELECT 
-    bet_at::date AS date,
+    bet_at_utc7::date AS date,
     player_id,
     slot_id,
     
@@ -33,4 +33,4 @@ SELECT
     COALESCE(AVG(total_prize / NULLIF(bet_amount, 0)) FILTER (WHERE bet_type = 3), 0) AS bet_3_odd_rtp
 
 FROM slot_parent_bet
-GROUP BY bet_at::date, player_id, slot_id;
+GROUP BY bet_at_utc7::date, player_id, slot_id;
