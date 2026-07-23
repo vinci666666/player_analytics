@@ -14,7 +14,6 @@ from psycopg2.pool import ThreadedConnectionPool
 
 CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config.json'))
 QUERY_TIMEOUT_MS = 30_000
-PLAYER_DAILY_SUMMARY = "public.player_daily_summary"
 PLAYER_DAILY = "public.player_daily"
 LOCAL_DB_DEFAULTS = {
     "host": "localhost",
@@ -240,16 +239,6 @@ def db_error_response(error):
     if "statement timeout" in error_text or "canceling statement due to statement timeout" in error_text:
         return jsonify({"error": "查詢超過 30 秒，請縮小範圍或重新送出請求"}), 504
     return jsonify({"error": error_text}), 500
-
-
-def is_player_daily_summary_available(cursor):
-    cursor.execute("""
-        SELECT COALESCE((SELECT c.relkind = 'm' AND c.relispopulated
-                         FROM pg_class c WHERE c.oid = to_regclass(%s)), false)
-    """, (PLAYER_DAILY_SUMMARY,))
-    row = cursor.fetchone()
-    value = next(iter(row.values())) if isinstance(row, dict) else row[0]
-    return bool(value)
 
 
 def is_player_daily_available(cursor):

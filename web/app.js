@@ -5,14 +5,14 @@ import {
   formatDateTimeForTooltip,
   formatDateTimeText,
   formatNullableCurrency,
-  parseNullableNumber
+  parseNullableNumber,
+  setFormatterLocale
 } from './js/formatters.js';
 import {
-  addOneCalendarMonth,
   getCalendarMonthRange,
   getDefaultRangeStartDate,
   getPreviousCalendarMonthRange,
-  isDateRangeOverOneMonth,
+  isDateRangeOverOneYear,
   monthIndex,
   shiftMonth
 } from './js/date-utils.js';
@@ -23,19 +23,27 @@ import { installAutoFitText } from './js/text-fit.js';
 // 全域狀態變數
 let analyzedData = [];      // 用於快取目前所選玩家在指定日期的所有旋轉紀錄
 let currentLang = 'zh';     // 語系設定：預設為繁體中文 ('zh')，支援切換為英文 ('en')
+const activeLocale = () => currentLang === 'zh' ? 'zh-TW' : 'en-US';
 let currentPlayersRequestController = null;
 let currentDataRequestController = null;
+let currentPlayerGamesRequestController = null;
 let monthlyDataCache = [];
 let latestAvailableMonth = '';
+let monthlyLatestAvailableDate = '';
 let lastLoadedMonthlyMonth = '';
 let gameDataCache = [];
 let gameHourlyPlayersCache = [];
+let gameComparisonDataCache = [];
+let gameComparisonSlotCache = '';
 let monthlyGameRankingCache = [];
 let monthlyGameRankingRange = { startDate: '', endDate: '' };
 let monthlyRankingSort = { key: 'total_spin_count', direction: 'desc' };
 let gameSpinDistributionCache = [];
 let gameRankingCache = [];
 let gameRankingSort = { key: 'total_spin_count', direction: 'desc' };
+let gameDetailSort = { key: 'date', direction: 'asc' };
+let agentDetailSort = { key: 'date', direction: 'desc' };
+let agentGameDetailSort = { key: 'date', direction: 'asc' };
 let gameRankingRequestId = 0;
 let gameLatestAvailableDate = '';
 let lastLoadedGameSingleDate = '';
@@ -43,11 +51,13 @@ let homeDashboardCache = null;
 let agentOptionRows = [];
 let agentInitialized = false;
 let agentAnalysisCache = null;
+let agentGamePerformanceCache = null;
 let agentGamePerformanceRequestId = 0;
 const UI_STATE_KEY = 'playerAnalytics.uiState.v1';
 let restoredUiState = null;
 let pendingGameSlot = '';
 let pendingPlayerId = '';
+let pendingPlayerGame = 'ALL';
 let navigationToastTimer = null;
 let singlePlayerContext = null;
 let chartRenderFrame = null;
@@ -101,6 +111,7 @@ function saveUiState() {
         endDate: dateEndSelect.value,
         minSpins: minSpinsInput.value,
         maxSpins: maxSpinsInput.value,
+        game: playerGameSelect.value,
         playerId: playerSelect.value,
         newPlayer: checkboxNewPlayer.checked,
         oldPlayer: checkboxOldPlayer.checked,
@@ -122,7 +133,9 @@ const dateStartSelect = document.getElementById('date-start-select');
 const dateEndSelect = document.getElementById('date-end-select');
 const minSpinsInput = document.getElementById('input-min-spins');
 const maxSpinsInput = document.getElementById('input-max-spins');
+const playerGameSelect = document.getElementById('player-game-select');
 const playerSelect = document.getElementById('player-select');
+const btnOpenSinglePlayer = document.getElementById('btn-open-single-player');
 const btnLangToggle = document.getElementById('btn-lang-toggle');
 const btnApplyFilters = document.getElementById('btn-apply-filters');
 const checkboxNewPlayer = document.getElementById('checkbox-new-player');
@@ -149,6 +162,10 @@ const btnLoadMonthly = document.getElementById('btn-load-monthly');
 const monthlyStatus = document.getElementById('monthly-status');
 const gameContent = document.getElementById('game-analysis-content');
 const gameSlotSelect = document.getElementById('game-slot-select');
+const gameCompareToggleControl = document.getElementById('game-compare-toggle-control');
+const gameCompareCheckbox = document.getElementById('game-compare-checkbox');
+const gameCompareSelectControl = document.getElementById('game-compare-select-control');
+const gameCompareSlotSelect = document.getElementById('game-compare-slot-select');
 const gameDateModeSelect = document.getElementById('game-date-mode-select');
 const gameSingleDateControls = document.getElementById('game-single-date-controls');
 const gameSingleDate = document.getElementById('game-single-date');
@@ -160,6 +177,7 @@ const gameEndDate = document.getElementById('game-end-date');
 const btnLoadGame = document.getElementById('btn-load-game');
 const gameStatus = document.getElementById('game-status');
 const gameSpinDistributionPanel = document.getElementById('game-spin-distribution-panel');
+const gameCompareSpinDistributionPanel = document.getElementById('game-compare-spin-distribution-panel');
 const gameDauDnuPanel = document.getElementById('game-dau-dnu-panel');
 const gameRtpPanel = document.getElementById('game-rtp-panel');
 const gameRetentionPanel = document.getElementById('game-retention-panel');
@@ -240,6 +258,8 @@ const translations = {
     legendGs: "Game Switch Marker",
     filterTitle: "Player Analysis Filters",
     labelActivePlayer: "Player ID",
+    labelPlayerGame: "Game",
+    playerGamesLoadFailed: "Game list failed to load; please reload the page.",
     labelActiveDate: "Analysis Date",
     labelFiltersTitle: "Player Segments",
     labelNewPlayer: "New Player",
@@ -279,6 +299,7 @@ const translations = {
     tabTable: "📊 Betting Sequence Details",
     gameWagerSummaryTitle: "Game Wager Records",
     gameWagerGame: "Game",
+    gameName: "Game Name",
     gameWagerType: "Wager Type",
     thSeq: "Sequence",
     thPlayer: "Player ID",
@@ -288,7 +309,7 @@ const translations = {
     betTypeNormal: "Normal Bet",
     betTypeAnte: "Ante Bet",
     betTypeBuy: "Buy Feature",
-    betTypeUnknown: "unknown ({type})",
+    betTypeUnknown: "Unknown",
     thSwitch: "Game Changed",
     thFree: "Free Spin",
     thBet: "Wager (IDR)",
@@ -317,7 +338,7 @@ const translations = {
     tooltipPrize: "Prize",
     tooltipFreeGame: "⭐ Free Game Spin",
     tooltipSwitch: "🔄 Switched Slot Game",
-    tooltipNewGame: "New Game ID",
+    tooltipNewGame: "New Game",
     tooltipCumShort: "Cum. Profit",
     navTitle: "Operations Analytics",
     navEyebrow: "ANALYTICS",
@@ -332,9 +353,9 @@ const translations = {
     navPlayer: "Player Behavior",
     singlePlayerEyebrow: "PLAYER LOOKUP",
     singlePlayerTitle: "Single Player Analysis",
-    singlePlayerDescription: "Enter a player name and date range to view betting trends and individual wager details.",
-    singlePlayerName: "Player Name",
-    singlePlayerNamePlaceholder: "Enter the full player name",
+    singlePlayerDescription: "Enter a player name or Player ID and date range to view betting trends and individual wager details.",
+    singlePlayerName: "Player Name / Player ID",
+    singlePlayerNamePlaceholder: "Enter a player name or Player ID",
     singlePlayerStart: "Start Date",
     singlePlayerEnd: "End Date",
     singlePlayerSubmit: "Analyze Player",
@@ -342,7 +363,7 @@ const translations = {
     singlePlayerQuerying: "Querying…",
     singlePlayerLoaded: "Loaded {count} wagers for {name} from {start} to {end}.",
     singlePlayerNoData: "No wagers were found for this player in the selected period.",
-    singlePlayerNameRequired: "Enter a player name.",
+    singlePlayerNameRequired: "Enter a player name or Player ID.",
     homeEyebrow: "OPERATIONS OVERVIEW",
     homeTitle: "Operations Overview",
     homeDescription: "Monitor operating performance, game rankings, and high-profit player alerts",
@@ -384,6 +405,8 @@ const translations = {
     monthlyRangeOrderError: "Start month must be before or equal to end month.",
     monthlyRangeLimitError: "Month comparison is limited to 6 months.",
     labelGame: "Game",
+    compareGames: "Compare another game",
+    labelCompareGame: "Comparison game",
     labelGameDateMode: "Date Range",
     gameDateToday: "Today",
     gameDateYesterday: "Yesterday",
@@ -421,7 +444,8 @@ const translations = {
     agentLoaded: "Agent analysis loaded.",
     agentNoData: "No agent data for the selected filters.",
     agentLoadError: "Failed to load agent analysis: {message}",
-    gameOption: "{name} (ID {slot})",
+    gameOption: "{name}",
+    unknownGame: "Unknown Game",
     chartDailyRtp: "Daily RTP Trend",
     chartDailyGgr: "Daily GGR Trend",
     chartDailyPlayers: "Daily Active Players (DAU)",
@@ -454,6 +478,7 @@ const translations = {
     gameDailyBetGgr: "GGR (IDR)",
     axisPlayers: "Players",
     axisRtp: "RTP (%)",
+    oddRtp: "Odd RTP",
     axisRetention: "Retention (%)",
     axisGgr: "GGR (IDR)",
     axisDnuRate: "DNU / DAU (%)",
@@ -471,7 +496,7 @@ const translations = {
     serverError: "Server error",
     noDates: "No dates found in database",
     dateOrderError: "Start date must be before or equal to End date",
-    rangeLimitError: "Time interval must be within one month",
+    rangeLimitError: "Time interval must be within one year",
     loading: "Loading...",
     globalDataLoading: "Searching for or loading data…",
     noPlayers: "(No players match filters)",
@@ -486,7 +511,47 @@ const translations = {
     loginSubmit: "Sign In",
     loginSubmitting: "Signing in…",
     loginInvalid: "Incorrect password. Please try again.",
-    logout: "Sign Out"
+    logout: "Sign Out",
+    agentParent: "Parent Agent",
+    agentLabel: "Agent",
+    agentGame: "Game",
+    agentAll: "All",
+    agentAllGames: "All Games",
+    agentLoad: "Run Agent Analysis",
+    agentGameSummary: "Game Summary",
+    agentDetails: "Daily Details",
+    agentSortHint: "Sorted by Spins",
+    agentPlayers: "Players",
+    agentBet: "Total Wager",
+    agentWin: "Total Payout",
+    agentDailyBetTitle: "Daily Bet Statistics for Selected Game",
+    username: "Username",
+    notLoaded: "Data has not been loaded",
+    apiRequestFailed: "The data request failed. Please try again.",
+    pageNavigation: "Page navigation",
+    date: "Date",
+    selectGame: "Select {game}",
+    drillDown: "Drill down to {entity}",
+    allGameDetails: "Daily Game Details (click to select game)",
+    gameDailyDetails: "{game} Daily Details",
+    agentDailyDetails: "Daily Agent Details (click to drill down)",
+    parentAgentDailyDetails: "Daily Parent Agent Details (click to drill down)",
+    openGameAnalysis: "Open game performance analysis for {game}",
+    openPlayerAnalysis: "Open individual analysis for {player}",
+    homeAgentSevenDayShare: "7-Day Agent Spin Share",
+    homeAgentCurrentDayShare: "Current-Day Agent Spin Share",
+    other: "Other",
+    parentAgentSpinShare: "Parent Agent Total Spin Share",
+    parentAgentGgr: "GGR by Parent Agent",
+    agentSpinShareTopFive: "Agent Total Spin Share (Top 5)",
+    agentGgr: "GGR by Agent",
+    dailyTotalSpins: "{context} Daily Total Spins",
+    dailyGgr: "{context} Daily GGR",
+    totalSpinsByGame: "Total Spins by Game",
+    ggrByGame: "GGR by Game",
+    dayOfMonth: "Day of Month",
+    documentTitle: "iGaming Operations Analytics Platform",
+    languageToggle: "EN / 繁中"
   },
   zh: {
     title: "iGaming 營運分析平台",
@@ -496,6 +561,8 @@ const translations = {
     legendGs: "切換遊戲標記",
     filterTitle: "玩家分析篩選條件",
     labelActivePlayer: "玩家 ID",
+    labelPlayerGame: "遊戲",
+    playerGamesLoadFailed: "遊戲清單載入失敗，請重新載入頁面。",
     labelActiveDate: "分析日期",
     labelFiltersTitle: "玩家分群",
     labelNewPlayer: "新玩家",
@@ -535,16 +602,17 @@ const translations = {
     tabTable: "📊 投注序列明細",
     gameWagerSummaryTitle: "遊戲投注紀錄",
     gameWagerGame: "遊戲",
+    gameName: "遊戲名稱",
     gameWagerType: "投注方式",
     thSeq: "投注序號",
     thPlayer: "玩家 ID",
     thTime: "時間戳記 (bet_at_utc7)",
     thSlot: "遊戲名稱",
     thBetType: "投注方式",
-    betTypeNormal: "Normal Bet",
-    betTypeAnte: "Ante Bet",
-    betTypeBuy: "Buy Feature",
-    betTypeUnknown: "未知 ({type})",
+    betTypeNormal: "一般投注",
+    betTypeAnte: "加注投注",
+    betTypeBuy: "購買功能",
+    betTypeUnknown: "未知",
     thSwitch: "遊戲切換",
     thFree: "免費旋轉",
     thBet: "投注額 (IDR)",
@@ -573,7 +641,7 @@ const translations = {
     tooltipPrize: "派彩",
     tooltipFreeGame: "⭐ 免費旋轉",
     tooltipSwitch: "🔄 切換老虎機遊戲",
-    tooltipNewGame: "新遊戲 ID",
+    tooltipNewGame: "新遊戲",
     tooltipCumShort: "累計利潤",
     navTitle: "營運分析中心",
     navEyebrow: "數據分析",
@@ -588,9 +656,9 @@ const translations = {
     navPlayer: "玩家行為分析",
     singlePlayerEyebrow: "單一玩家查詢",
     singlePlayerTitle: "單獨玩家分析",
-    singlePlayerDescription: "輸入玩家名稱與時間範圍，查看押注趨勢與每筆押注明細。",
-    singlePlayerName: "玩家名稱",
-    singlePlayerNamePlaceholder: "輸入完整玩家名稱",
+    singlePlayerDescription: "輸入玩家名稱或 Player ID 與時間範圍，查看押注趨勢與每筆押注明細。",
+    singlePlayerName: "玩家名稱 / Player ID",
+    singlePlayerNamePlaceholder: "輸入玩家名稱或 Player ID",
     singlePlayerStart: "開始日期",
     singlePlayerEnd: "結束日期",
     singlePlayerSubmit: "查詢玩家",
@@ -598,7 +666,7 @@ const translations = {
     singlePlayerQuerying: "查詢中…",
     singlePlayerLoaded: "已載入 {name} 於 {start} 至 {end} 的 {count} 筆押注。",
     singlePlayerNoData: "此玩家在所選期間沒有押注紀錄。",
-    singlePlayerNameRequired: "請輸入玩家名稱。",
+    singlePlayerNameRequired: "請輸入玩家名稱或 Player ID。",
     homeEyebrow: "營運總覽",
     homeTitle: "營運總覽",
     homeDescription: "即時掌握營運績效、遊戲排行與高獲利玩家警示",
@@ -640,6 +708,8 @@ const translations = {
     monthlyRangeOrderError: "開始月份必須早於或等於結束月份。",
     monthlyRangeLimitError: "月比較區間最多為 6 個月。",
     labelGame: "遊戲",
+    compareGames: "比較其他遊戲",
+    labelCompareGame: "比較遊戲",
     labelGameDateMode: "時間範圍",
     gameDateToday: "今日",
     gameDateYesterday: "昨日",
@@ -677,7 +747,8 @@ const translations = {
     agentLoaded: "Agent 分析已載入。",
     agentNoData: "所選條件沒有 Agent 資料。",
     agentLoadError: "Agent 分析載入失敗：{message}",
-    gameOption: "{name}（ID {slot}）",
+    gameOption: "{name}",
+    unknownGame: "未知遊戲",
     chartDailyRtp: "每日 RTP 趨勢",
     chartDailyGgr: "每日營收 (GGR) 趨勢",
     chartDailyPlayers: "每日活躍玩家 (DAU)",
@@ -710,6 +781,7 @@ const translations = {
     gameDailyBetGgr: "GGR（IDR）",
     axisPlayers: "玩家數",
     axisRtp: "RTP (%)",
+    oddRtp: "特殊 RTP",
     axisRetention: "Retention (%)",
     axisGgr: "GGR (IDR)",
     axisDnuRate: "DNU / DAU (%)",
@@ -727,7 +799,7 @@ const translations = {
     serverError: "伺服器錯誤",
     noDates: "資料庫中無日期資料",
     dateOrderError: "開始日期必須小於或等於結束日期",
-    rangeLimitError: "時間區間不可超過一個月",
+    rangeLimitError: "時間區間不可超過一年",
     loading: "載入中...",
     globalDataLoading: "正在搜尋或載入資料…",
     noPlayers: "(此條件下查無玩家)",
@@ -742,15 +814,81 @@ const translations = {
     loginSubmit: "登入平台",
     loginSubmitting: "登入中…",
     loginInvalid: "密碼錯誤，請重新輸入。",
-    logout: "登出"
+    logout: "登出",
+    agentParent: "上層 Agent",
+    agentLabel: "Agent",
+    agentGame: "遊戲",
+    agentAll: "全部",
+    agentAllGames: "全部遊戲",
+    agentLoad: "執行 Agent 分析",
+    agentGameSummary: "遊戲彙總",
+    agentDetails: "每日明細",
+    agentSortHint: "依 Spin 數排序",
+    agentPlayers: "玩家數",
+    agentBet: "總投注額",
+    agentWin: "總派彩額",
+    agentDailyBetTitle: "單一遊戲每日投注統計",
+    username: "玩家名稱",
+    notLoaded: "尚未載入資料",
+    apiRequestFailed: "資料請求失敗，請稍後再試。",
+    pageNavigation: "頁面導覽",
+    date: "日期",
+    selectGame: "選擇 {game}",
+    drillDown: "下鑽至 {entity}",
+    allGameDetails: "所有遊戲每日明細（點擊選擇遊戲）",
+    gameDailyDetails: "{game} 每日明細",
+    agentDailyDetails: "Agent 每日明細（點擊下鑽）",
+    parentAgentDailyDetails: "上層 Agent 每日明細（點擊下鑽）",
+    openGameAnalysis: "查看 {game} 的遊戲績效分析",
+    openPlayerAnalysis: "查看 {player} 的單獨玩家分析",
+    homeAgentSevenDayShare: "近 7 日 Agent Spin 占比",
+    homeAgentCurrentDayShare: "當日 Agent Spin 占比",
+    other: "其他",
+    parentAgentSpinShare: "上層 Agent Total Spin 占比",
+    parentAgentGgr: "各上層 Agent GGR",
+    agentSpinShareTopFive: "Agent Total Spin 占比（前 5 名）",
+    agentGgr: "各 Agent GGR",
+    dailyTotalSpins: "{context} 每日 Total Spin",
+    dailyGgr: "{context} 每日 GGR",
+    totalSpinsByGame: "所有遊戲 Total Spin",
+    ggrByGame: "所有遊戲 GGR",
+    dayOfMonth: "日期（日）",
+    documentTitle: "iGaming 營運分析平台",
+    languageToggle: "繁中 / EN"
   }
 };
+
+const localizedStatusStates = new WeakMap();
+
+function refreshLocalizedStatus(element) {
+  const state = localizedStatusStates.get(element);
+  if (!state) return;
+  let message = translations[currentLang][state.key] || '';
+  Object.entries(state.replacements).forEach(([key, value]) => {
+    message = message.replace(`{${key}}`, value);
+  });
+  element.textContent = message;
+}
+
+function setLocalizedStatus(element, key, replacements = {}) {
+  if (!key) {
+    localizedStatusStates.delete(element);
+    element.textContent = '';
+    return;
+  }
+  localizedStatusStates.set(element, { key, replacements });
+  refreshLocalizedStatus(element);
+}
 
 function updateLanguageUI() {
   // 依據當前語系設定更新網頁上的所有文字欄位
   const lang = translations[currentLang];
+  const locale = activeLocale();
+  document.documentElement.lang = currentLang === 'zh' ? 'zh-Hant' : 'en';
+  setFormatterLocale(locale);
+  document.querySelector('.page-navigation')?.setAttribute('aria-label', lang.pageNavigation);
   globalDataLoadingMessage.textContent = lang.globalDataLoading;
-  document.title = currentLang === 'zh' ? 'iGaming 營運分析平台' : 'iGaming Operations Analytics Platform';
+  document.title = lang.documentTitle;
   document.getElementById('login-title').textContent = lang.loginTitle;
   document.getElementById('login-description').textContent = lang.loginDescription;
   document.getElementById('login-password-label').textContent = lang.loginPasswordLabel;
@@ -760,10 +898,7 @@ function updateLanguageUI() {
   // 頁首 Header 區塊
   document.getElementById('nav-title').childNodes[0].textContent = lang.title + ' ';
   document.getElementById('nav-subtitle').textContent = lang.subtitle;
-  document.getElementById('legend-curve').textContent = lang.legendCurve;
-  document.getElementById('legend-fg').textContent = lang.legendFg;
-  document.getElementById('legend-gs').textContent = lang.legendGs;
-  btnLangToggle.textContent = currentLang === 'zh' ? '繁中 / EN' : 'EN / 繁中';
+  btnLangToggle.textContent = lang.languageToggle;
 
   document.getElementById('page-nav-title').textContent = lang.navTitle;
   document.getElementById('page-nav-eyebrow').textContent = lang.navEyebrow;
@@ -780,7 +915,8 @@ function updateLanguageUI() {
   singlePlayerName.placeholder = lang.singlePlayerNamePlaceholder;
   document.getElementById('single-player-start-label').textContent = lang.singlePlayerStart;
   document.getElementById('single-player-end-label').textContent = lang.singlePlayerEnd;
-  if (!singlePlayerSubmit.disabled) singlePlayerSubmit.textContent = lang.singlePlayerSubmit;
+  singlePlayerSubmit.textContent = singlePlayerSubmit.disabled ? lang.singlePlayerQuerying : lang.singlePlayerSubmit;
+  [singlePlayerStatus, monthlyStatus, gameStatus].forEach(refreshLocalizedStatus);
 
   document.getElementById('home-eyebrow').textContent = lang.homeEyebrow;
   document.getElementById('home-page-title').textContent = lang.homeTitle;
@@ -805,7 +941,7 @@ function updateLanguageUI() {
   });
   ['home-player-7d-body', 'home-player-day-body'].forEach(bodyId => {
     const headers = document.getElementById(bodyId).closest('table').querySelectorAll('th');
-    ['Username', lang.totalSpinsLabel, `${lang.totalBet} (IDR)`, `${lang.totalWin} (IDR)`, `${lang.homeProfit} (IDR)`]
+    [lang.username, lang.totalSpinsLabel, `${lang.totalBet} (IDR)`, `${lang.totalWin} (IDR)`, `${lang.homeProfit} (IDR)`]
       .forEach((label, index) => headers[index].textContent = label);
   });
 
@@ -856,7 +992,51 @@ function updateLanguageUI() {
   document.getElementById('agent-page-title').textContent = lang.agentTitle;
   document.getElementById('agent-eyebrow').textContent = lang.agentEyebrow;
   document.getElementById('agent-page-description').textContent = lang.agentDescription;
+  document.getElementById('agent-label-parent').textContent = lang.agentParent;
+  document.getElementById('agent-label-agent').textContent = lang.agentLabel;
+  document.getElementById('agent-label-game').textContent = lang.agentGame;
+  document.getElementById('agent-label-start-date').textContent = lang.labelStartDate;
+  document.getElementById('agent-label-end-date').textContent = lang.labelEndDate;
+  document.getElementById('btn-load-agent').textContent = lang.agentLoad;
+  document.getElementById('agent-game-summary-title').textContent = lang.agentGameSummary;
+  document.getElementById('agent-details-title').textContent = lang.agentDetails;
+  document.getElementById('home-agent-sort-hint').textContent = lang.agentSortHint;
+  document.getElementById('agent-game-daily-bet-title').textContent = lang.agentDailyBetTitle;
+  ['agent-parent-select', 'agent-select'].forEach(id => {
+    const all = document.querySelector(`#${id} option[value="ALL"]`);
+    if (all) all.textContent = lang.agentAll;
+  });
+  const allAgentGames = document.querySelector('#agent-game-select option[value="ALL"]');
+  if (allAgentGames) allAgentGames.textContent = lang.agentAllGames;
+  const agentMetricLabels = [lang.avgPlayers, lang.avgDnu, lang.avgRtp, lang.totalSpinsLabel,
+    `${lang.totalBet} · IDR`, `${lang.totalWin} · IDR`, `${lang.totalGgr} · IDR`, lang.dataDays];
+  document.querySelectorAll('#agent-game-performance .monthly-metrics-grid .metric-label')
+    .forEach((element, index) => { element.textContent = agentMetricLabels[index]; });
+  document.querySelectorAll('#agent-game-summary-panel thead th').forEach((element, index) => {
+    element.textContent = [lang.agentGame, lang.totalSpinsLabel, lang.totalBet, lang.totalWin, 'GGR'][index];
+  });
+  document.querySelectorAll('#agent-game-daily-bet-panel thead button').forEach((element, index) => {
+    element.textContent = [lang.gameDailyBetDate, lang.gameDailyBetType, lang.gameDailyBetPlayers,
+      lang.gameDailyBetSpins, lang.gameDailyBetAmount, lang.gameDailyWinAmount,
+      lang.gameDailyBetRtp, lang.gameDailyBetGgr][index];
+    element.dataset.label = element.textContent;
+  });
+  document.querySelectorAll('#game-wager-summary-body').forEach(body => {
+    body.closest('table').querySelectorAll('thead th').forEach((element, index) => {
+      element.textContent = [lang.gameWagerGame, lang.gameWagerType, lang.totalSpinsLabel,
+        lang.totalBet, lang.totalWin][index];
+    });
+  });
+  const gameWagerEmpty = document.querySelector('#game-wager-summary-body .table-empty-message');
+  if (gameWagerEmpty) gameWagerEmpty.textContent = lang.notLoaded;
+  ['home-agent-7d-body', 'home-agent-day-body'].forEach(bodyId => {
+    const headers = document.getElementById(bodyId).closest('table').querySelectorAll('th');
+    [lang.agentParent, lang.agentLabel, lang.agentPlayers, lang.totalSpinsLabel,
+      lang.agentBet, lang.agentWin, 'GGR'].forEach((label, index) => { headers[index].textContent = label; });
+  });
   document.getElementById('game-label-slot').textContent = lang.labelGame;
+  document.getElementById('game-compare-checkbox-label').textContent = lang.compareGames;
+  document.getElementById('game-label-compare-slot').textContent = lang.labelCompareGame;
   document.getElementById('game-label-date-mode').textContent = lang.labelGameDateMode;
   document.getElementById('game-date-mode-today').textContent = lang.gameDateToday;
   document.getElementById('game-date-mode-yesterday').textContent = lang.gameDateYesterday;
@@ -878,6 +1058,7 @@ function updateLanguageUI() {
   document.getElementById('game-label-total-ggr').textContent = lang.totalGgr;
   document.getElementById('game-label-days').textContent = lang.dataDays;
   document.getElementById('game-daily-bet-title').textContent = lang.gameDailyBetTitle;
+  document.getElementById('game-daily-bet-game').textContent = lang.gameName;
   document.getElementById('game-daily-bet-date').textContent = lang.gameDailyBetDate;
   document.getElementById('game-daily-bet-type').textContent = lang.gameDailyBetType;
   document.getElementById('game-daily-bet-players').textContent = lang.gameDailyBetPlayers;
@@ -886,15 +1067,18 @@ function updateLanguageUI() {
   document.getElementById('game-daily-win-amount').textContent = lang.gameDailyWinAmount;
   document.getElementById('game-daily-bet-rtp').textContent = lang.gameDailyBetRtp;
   document.getElementById('game-daily-bet-ggr').textContent = lang.gameDailyBetGgr;
+  document.querySelectorAll('[data-game-detail-key]').forEach(button => { button.dataset.label = button.textContent; });
   Array.from(gameSlotSelect.options).forEach(option => {
     option.textContent = option.value === 'ALL'
       ? lang.allGames
-      : lang.gameOption.replace('{name}', option.dataset.gameName || option.value).replace('{slot}', option.value);
+      : lang.gameOption.replace('{name}', formatGameNameOnly(option.value, option.dataset.gameName));
   });
   
   // 篩選器面板區塊
   document.getElementById('filter-title').textContent = lang.filterTitle;
   document.getElementById('label-active-player').textContent = lang.labelActivePlayer;
+  document.getElementById('label-player-game').textContent = lang.labelPlayerGame;
+  document.getElementById('label-open-single-player').textContent = lang.singlePlayerTitle;
   document.getElementById('label-active-date').textContent = lang.labelActiveDate;
   document.getElementById('label-filters-title').textContent = lang.labelFiltersTitle;
   document.getElementById('label-new-player').textContent = lang.labelNewPlayer;
@@ -917,10 +1101,22 @@ function updateLanguageUI() {
   if (optPlaceholderDate) {
     optPlaceholderDate.textContent = lang.placeholderDate;
   }
+  ['opt-placeholder-start-date', 'opt-placeholder-end-date'].forEach(id => {
+    const option = document.getElementById(id);
+    if (option) option.textContent = lang.placeholderDate;
+  });
+  Array.from(gameCompareSlotSelect.options).forEach(option => {
+    option.textContent = lang.gameOption.replace('{name}', formatGameNameOnly(option.value, option.dataset.gameName));
+  });
   const optPlaceholderPlayer = document.getElementById('opt-placeholder-player');
   if (optPlaceholderPlayer) {
     optPlaceholderPlayer.textContent = lang.placeholderPlayer;
   }
+  Array.from(playerGameSelect.options).forEach(option => {
+    option.textContent = option.value === 'ALL'
+      ? lang.allGames
+      : lang.gameOption.replace('{name}', option.dataset.gameName || option.textContent);
+  });
   
   // 指標看板
   document.getElementById('metrics-player-title').textContent = lang.metricsPlayerTitle;
@@ -967,12 +1163,19 @@ function updateLanguageUI() {
     else renderMonthlyCharts(monthlyDataCache);
   }
   if (monthlyGameRankingCache.length) renderMonthlyGameRanking();
-  if (gameDataCache.length) renderGameCharts(gameDataCache, gameSlotSelect.value || 'ALL', gameHourlyPlayersCache);
-  if (gameDataCache.length) renderGameDailyBetStats(gameDataCache, gameSlotSelect.value || 'ALL');
-  if (gameSpinDistributionCache.length && gameSlotSelect.value !== 'ALL') renderGameSpinDistribution(gameSpinDistributionCache);
+  if (gameDataCache.length && gameCompareCheckbox.checked && gameCompareSlotSelect.value) loadGameData();
+  else if (gameDataCache.length) renderGameCharts(gameDataCache, gameSlotSelect.value || 'ALL', gameHourlyPlayersCache);
+  if (gameDataCache.length) renderGameDailyBetStats(gameDataCache, gameSlotSelect.value || 'ALL', gameComparisonDataCache, gameComparisonSlotCache);
+  if (gameSpinDistributionCache.length && gameSlotSelect.value !== 'ALL') {
+    renderGameSpinDistribution(gameSpinDistributionCache, 'game-spin-distribution-chart', gameSeriesName(gameSlotSelect.value, gameSpinDistributionCache));
+  }
+  if (gameComparisonDataCache.length && gameComparisonSlotCache) {
+    renderGameSpinDistribution(gameComparisonDataCache, 'game-compare-spin-distribution-chart', gameSeriesName(gameComparisonSlotCache, gameComparisonDataCache));
+  }
   if (gameRankingCache.length && gameSlotSelect.value === 'ALL') renderGameRanking();
   if (homeDashboardCache) renderHomeDashboard(homeDashboardCache);
   if (agentAnalysisCache) renderAgentAnalysis(agentAnalysisCache);
+  if (analyzedData.length) renderDashboard();
 }
 
 // ----------------------------------------------------
@@ -1027,6 +1230,10 @@ dateEndSelect.addEventListener('change', () => {
   markFiltersPending();
 });
 
+playerGameSelect.addEventListener('change', () => {
+  markFiltersPending();
+});
+
 // Spin 數範圍輸入框改變，只標記待篩選；按下篩選按鈕才重新加載玩家 ID 清單
 minSpinsInput.addEventListener('change', () => {
   normalizeSpinRangeInputs();
@@ -1055,6 +1262,7 @@ playerSelect.addEventListener('change', () => {
     endDate = dateEndSelect.value;
   }
   const selectedPlayer = playerSelect.value;
+  updatePlayerAnalysisButtonState();
   if (startDate && endDate && selectedPlayer) {
     loadAnalyzedData(startDate, endDate, selectedPlayer);
   } else {
@@ -1087,12 +1295,63 @@ checkboxLosePlayer.addEventListener('change', () => {
 // 後端 REST API 請求與串接
 // ----------------------------------------------------
 
+async function loadPlayerGames() {
+  if (currentPlayerGamesRequestController) currentPlayerGamesRequestController.abort();
+  currentPlayerGamesRequestController = new AbortController();
+  const requestController = currentPlayerGamesRequestController;
+  const previousGame = playerGameSelect.value;
+  playerGameSelect.disabled = true;
+  playerGameSelect.innerHTML = `<option value="ALL">${translations[currentLang].loading}</option>`;
+  try {
+    const response = await fetch('/api/player-games', { signal: requestController.signal });
+    const games = await response.json();
+    if (!response.ok) throw new Error(translations[currentLang].apiRequestFailed);
+    if (currentPlayerGamesRequestController !== requestController) return;
+
+    const options = document.createDocumentFragment();
+    const allGames = document.createElement('option');
+    allGames.value = 'ALL';
+    allGames.textContent = translations[currentLang].allGames;
+    options.appendChild(allGames);
+    games.forEach(game => {
+      const option = document.createElement('option');
+      option.value = String(game.slot_id);
+      option.dataset.gameName = game.game_name;
+      option.textContent = translations[currentLang].gameOption.replace('{name}', game.game_name);
+      options.appendChild(option);
+    });
+    playerGameSelect.replaceChildren(options);
+    const desiredGame = pendingPlayerGame !== 'ALL' ? pendingPlayerGame : previousGame;
+    playerGameSelect.value = Array.from(playerGameSelect.options).some(option => option.value === desiredGame)
+      ? desiredGame
+      : 'ALL';
+    pendingPlayerGame = 'ALL';
+    saveUiState();
+  } catch (error) {
+    if (error.name === 'AbortError') return;
+    console.error('載入玩家分析遊戲清單失敗:', error);
+    playerGameSelect.innerHTML = '';
+    const allGames = document.createElement('option');
+    allGames.value = 'ALL';
+    allGames.textContent = translations[currentLang].allGames;
+    const errorOption = document.createElement('option');
+    errorOption.disabled = true;
+    errorOption.textContent = `⚠️ ${translations[currentLang].playerGamesLoadFailed}`;
+    playerGameSelect.append(allGames, errorOption);
+  } finally {
+    if (currentPlayerGamesRequestController === requestController) {
+      currentPlayerGamesRequestController = null;
+      playerGameSelect.disabled = false;
+    }
+  }
+}
+
 function loadAvailableDates() {
   // 自 API /api/dates 獲取可選的分區日期清單，並預設加載首個日期
   fetch('/api/dates')
     .then(res => {
       if (!res.ok) {
-        return res.json().then(data => { throw new Error(data.error || translations[currentLang].serverError); });
+        return res.json().then(() => { throw new Error(translations[currentLang].apiRequestFailed); });
       }
       return res.json();
     })
@@ -1112,6 +1371,8 @@ function loadAvailableDates() {
         return;
       }
       
+      monthlyLatestAvailableDate = dates[0];
+
       dates.forEach(d => {
         // 單一日期
         const opt = document.createElement('option');
@@ -1181,7 +1442,7 @@ function triggerLoadPlayers() {
     return;
   }
 
-  if (mode === 'range' && isDateRangeOverOneMonth(startDate, endDate)) {
+  if (mode === 'range' && isDateRangeOverOneYear(startDate, endDate)) {
     playerSelect.innerHTML = `<option value="">⚠️ ${translations[currentLang].rangeLimitError}</option>`;
     resetDashboardState();
     return;
@@ -1192,9 +1453,14 @@ function triggerLoadPlayers() {
 
 let activePlayersList = []; // 用於快取目前加載的玩家 ID 陣列
 
+function updatePlayerAnalysisButtonState() {
+  btnOpenSinglePlayer.disabled = !playerSelect.value;
+}
+
 function markFiltersPending() {
   activePlayersList = [];
   playerSelect.innerHTML = `<option value="" id="opt-placeholder-player">${translations[currentLang].placeholderApplyFilters}</option>`;
+  updatePlayerAnalysisButtonState();
   resetDashboardState();
 }
 
@@ -1226,6 +1492,7 @@ function loadPlayersForDate(startDate, endDate) {
     min_spins: minSpins,
     max_spins: maxSpins
   });
+  queryParams.set('slot_id', playerGameSelect.value || 'ALL');
 
   if (currentPlayersRequestController) {
     currentPlayersRequestController.abort();
@@ -1238,13 +1505,14 @@ function loadPlayersForDate(startDate, endDate) {
 
   activePlayersList = [];
   playerSelect.innerHTML = `<option value="">${translations[currentLang].placeholderLoadingPlayers}</option>`;
+  updatePlayerAnalysisButtonState();
   resetDashboardState();
   setFilterLoading(true);
   
   fetch(`/api/players?${queryParams.toString()}`, { signal: requestController.signal })
     .then(res => {
       if (!res.ok) {
-        return res.json().then(data => { throw new Error(data.error || translations[currentLang].serverError); });
+        return res.json().then(() => { throw new Error(translations[currentLang].apiRequestFailed); });
       }
       return res.json();
     })
@@ -1266,6 +1534,7 @@ function loadPlayersForDate(startDate, endDate) {
         : err.message;
       console.error(`讀取日期範圍 ${startDate} ~ ${endDate} 的玩家清單失敗:`, err);
       playerSelect.innerHTML = `<option value="">⚠️ ${message}</option>`;
+      updatePlayerAnalysisButtonState();
       resetDashboardState();
     })
     .finally(() => {
@@ -1284,6 +1553,7 @@ function repopulatePlayerDropdown(startDate, endDate, selectPlayerId = null) {
     opt.value = "";
     opt.textContent = translations[currentLang].noPlayers;
     playerSelect.replaceChildren(opt);
+    updatePlayerAnalysisButtonState();
     resetDashboardState();
     return;
   }
@@ -1309,6 +1579,7 @@ function repopulatePlayerDropdown(startDate, endDate, selectPlayerId = null) {
   } else {
     playerSelect.value = "";
   }
+  updatePlayerAnalysisButtonState();
 }
 
 function loadAnalyzedData(startDate, endDate, player_id) {
@@ -1346,13 +1617,14 @@ function loadAnalyzedData(startDate, endDate, player_id) {
   queryParams.set('lose_player', losePlayer);
   queryParams.set('min_spins', minSpins);
   queryParams.set('max_spins', maxSpins);
+  queryParams.set('slot_id', playerGameSelect.value || 'ALL');
   tableBody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--text-secondary); font-weight: bold;">${translations[currentLang].placeholderLoadingPlayers}</td></tr>`;
   
   // 自 API /api/data 獲取指定日期和玩家的投注紀錄，並送入前端進行即時計算
   fetch(`/api/data?${queryParams.toString()}`, { signal: requestController.signal })
     .then(res => {
       if (!res.ok) {
-        return res.json().then(data => { throw new Error(data.error || translations[currentLang].serverError); });
+        return res.json().then(() => { throw new Error(translations[currentLang].apiRequestFailed); });
       }
       return res.json();
     })
@@ -1381,13 +1653,13 @@ async function loadSinglePlayerData(playerId = '') {
   const playerName = singlePlayerName.value.trim();
   const startDate = singlePlayerStartDate.value;
   const endDate = singlePlayerEndDate.value;
-  if (!playerName) {
-    singlePlayerStatus.textContent = lang.singlePlayerNameRequired;
+  if (!playerId && !playerName) {
+    setLocalizedStatus(singlePlayerStatus, 'singlePlayerNameRequired');
     singlePlayerName.focus();
     return;
   }
   if (!startDate || !endDate || startDate > endDate) {
-    singlePlayerStatus.textContent = lang.dateOrderError;
+    setLocalizedStatus(singlePlayerStatus, 'dateOrderError');
     return;
   }
 
@@ -1395,7 +1667,7 @@ async function loadSinglePlayerData(playerId = '') {
   singlePlayerSubmit.textContent = lang.singlePlayerQuerying;
   singlePlayerContent.classList.add('is-loading');
   singlePlayerContent.setAttribute('aria-busy', 'true');
-  singlePlayerStatus.textContent = lang.singlePlayerLoading;
+  setLocalizedStatus(singlePlayerStatus, 'singlePlayerLoading');
   tableBody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:2rem;color:var(--text-secondary);">${lang.singlePlayerLoading}</td></tr>`;
   const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
   if (playerId) {
@@ -1407,34 +1679,35 @@ async function loadSinglePlayerData(playerId = '') {
   try {
     const response = await fetch(`/api/data?${params}`);
     const records = await response.json();
-    if (!response.ok) throw new Error(records.error || lang.serverError);
+    if (!response.ok) throw new Error(lang.apiRequestFailed);
     if (!records.length) {
       singlePlayerContext = null;
       resetDashboardState();
-      singlePlayerStatus.textContent = lang.singlePlayerNoData;
+      setLocalizedStatus(singlePlayerStatus, 'singlePlayerNoData');
       return;
     }
     singlePlayerContext = {
-      name: records[0].player_username || playerName,
+      name: records[0].player_username || playerName || String(playerId),
       playerId: String(records[0].player_id),
       startDate,
       endDate
     };
     processAndRender(records);
-    singlePlayerStatus.textContent = lang.singlePlayerLoaded
-      .replace('{name}', singlePlayerContext.name)
-      .replace('{start}', startDate)
-      .replace('{end}', endDate)
-      .replace('{count}', records.length);
+    setLocalizedStatus(singlePlayerStatus, 'singlePlayerLoaded', {
+      name: singlePlayerContext.name,
+      start: startDate,
+      end: endDate,
+      count: records.length
+    });
   } catch (error) {
     singlePlayerContext = null;
     resetDashboardState();
-    singlePlayerStatus.textContent = lang.loadFailed.replace('{message}', error.message);
+    setLocalizedStatus(singlePlayerStatus, 'loadFailed', { message: error.message });
   } finally {
     singlePlayerContent.classList.remove('is-loading');
     singlePlayerContent.removeAttribute('aria-busy');
     singlePlayerSubmit.disabled = false;
-    singlePlayerSubmit.textContent = lang.singlePlayerSubmit;
+    singlePlayerSubmit.textContent = translations[currentLang].singlePlayerSubmit;
   }
 }
 
@@ -1581,20 +1854,7 @@ function renderDashboard() {
     const netClass = spinNet > 0 ? 'color: var(--success);' : (spinNet < 0 ? 'color: var(--danger);' : '');
     const timestampStr = formatDateTimeForTooltip(row.bet_at_utc7);
     
-    // 投注類型代碼映射為文字字串
-    let betTypeStr = '--';
-    if (row.bet_type !== undefined && row.bet_type !== null) {
-      const bType = Number(row.bet_type);
-      if (bType === 1) {
-        betTypeStr = lang.betTypeNormal;
-      } else if (bType === 2) {
-        betTypeStr = lang.betTypeAnte;
-      } else if (bType === 3) {
-        betTypeStr = lang.betTypeBuy;
-      } else {
-        betTypeStr = lang.betTypeUnknown.replace('{type}', bType);
-      }
-    }
+    const betTypeStr = getBetTypeLabel(row.bet_type, lang);
     
     htmlRuns.push(`
       <tr>
@@ -1785,7 +2045,7 @@ function renderPlotlyChart(chartData, player, date) {
       `${lang.tooltipNewGame}: %{text}<br>` +
       `${lang.tooltipCumShort}: %{y:,.0f} IDR<br>` +
       "<extra></extra>",
-    text: gsDataset.map(r => r.slot_id),
+    text: gsDataset.map(r => formatGameNameOnly(r.slot_id, r.game_name)),
     type: 'scattergl'
   };
 
@@ -1932,7 +2192,7 @@ function getBetTypeLabel(betType, lang) {
   if (bType === 1) return lang.betTypeNormal;
   if (bType === 2) return lang.betTypeAnte;
   if (bType === 3) return lang.betTypeBuy;
-  return lang.betTypeUnknown.replace('{type}', bType);
+  return lang.betTypeUnknown;
 }
 
 function getBetTypeColor(betType) {
@@ -1944,10 +2204,10 @@ function getBetTypeColor(betType) {
 }
 
 function formatGameDisplay(slotId, gameName) {
-  const name = gameName || String(slotId);
-  return translations[currentLang].gameOption
-    .replace('{name}', name)
-    .replace('{slot}', slotId);
+  return translations[currentLang].gameOption.replace(
+    '{name}',
+    formatGameNameOnly(slotId, gameName)
+  );
 }
 
 function buildChartCustomData(row, lang) {
@@ -1964,7 +2224,9 @@ function buildChartCustomData(row, lang) {
 
 function formatGameNameOnly(slotId, gameName) {
   const normalizedName = String(gameName || '').trim();
-  return normalizedName && normalizedName !== String(slotId) ? normalizedName : '--';
+  return normalizedName && normalizedName !== String(slotId)
+    ? normalizedName
+    : translations[currentLang].unknownGame;
 }
 
 function renderHomeDashboard(data) {
@@ -2028,7 +2290,7 @@ function renderHomeDashboard(data) {
     name: 'Spin',
     type: 'bar',
     marker: { color: '#6366f1' },
-    hovertemplate: '%{x|%Y-%m-%d %H:00}<br>Spin: %{y:,.0f}<extra></extra>'
+    hovertemplate: `%{x|%Y-%m-%d %H:00}<br>${lang.totalSpinsLabel}: %{y:,.0f}<extra></extra>`
   }], monthlyChartLayout(lang.homeHourlySpins, lang.totalSpinsLabel, {
     margin: { l: 65, r: 20, t: 48, b: 55 },
     xaxis: { tickformat: '%m/%d %H:00', dtick: 3 * 60 * 60 * 1000 }
@@ -2041,14 +2303,12 @@ function renderHomeDashboard(data) {
       return;
     }
     body.innerHTML = rows.map(row => `<tr class="home-ranking-link-row" tabindex="0" role="link">
-      <td>${escapeHtml(row.game_name || row.slot_id)}</td><td>${formatCount(row.total_spin_count)}</td><td>${formatCount(row.ggr)}</td>
+      <td>${escapeHtml(formatGameNameOnly(row.slot_id, row.game_name))}</td><td>${formatCount(row.total_spin_count)}</td><td>${formatCount(row.ggr)}</td>
     </tr>`).join('');
     Array.from(body.rows).forEach((tableRow, index) => {
       const game = rows[index];
-      const gameName = game.game_name || String(game.slot_id);
-      tableRow.title = currentLang === 'zh'
-        ? `查看 ${gameName} 的遊戲績效分析`
-        : `Open game performance analysis for ${gameName}`;
+      const gameName = formatGameNameOnly(game.slot_id, game.game_name);
+      tableRow.title = lang.openGameAnalysis.replace('{game}', gameName);
       tableRow.setAttribute('aria-label', tableRow.title);
       const openGameAnalysis = () => {
         gameDateModeSelect.value = startDate === endDate ? 'today' : 'seven-days';
@@ -2083,15 +2343,13 @@ function renderHomeDashboard(data) {
     Array.from(body.rows).forEach((tableRow, index) => {
       const player = rows[index];
       const username = player.username || String(player.player_id);
-      tableRow.title = currentLang === 'zh'
-        ? `查看 ${username} 的單獨玩家分析`
-        : `Open individual analysis for ${username}`;
+      tableRow.title = lang.openPlayerAnalysis.replace('{player}', username);
       tableRow.setAttribute('aria-label', tableRow.title);
       const openPlayerAnalysis = () => {
         singlePlayerName.value = username;
         singlePlayerStartDate.value = startDate;
         singlePlayerEndDate.value = endDate;
-        singlePlayerStatus.textContent = '';
+        setLocalizedStatus(singlePlayerStatus, '');
         setActivePage('single-player');
         loadSinglePlayerData(player.player_id);
       };
@@ -2111,7 +2369,7 @@ function renderHomeDashboard(data) {
     const tableTopRows = rankedRows.slice(0, 10);
     const otherSpins = rankedRows.slice(5).reduce((sum, row) => sum + Math.max(0, Number(row.total_spin_count || 0)), 0);
     const pieRows = otherSpins > 0
-      ? [...pieTopRows, { agent_name: currentLang === 'zh' ? '其他' : 'Other', total_spin_count: otherSpins }]
+      ? [...pieTopRows, { agent_name: lang.other, total_spin_count: otherSpins }]
       : pieTopRows;
     const labels = pieRows.map(row => row.agent_id === undefined
       ? row.agent_name
@@ -2122,7 +2380,7 @@ function renderHomeDashboard(data) {
       type: 'pie',
       hole: 0.48,
       textinfo: 'label+percent',
-      hovertemplate: '%{label}<br>Spin: %{value:,.0f}<br>%{percent}<extra></extra>'
+      hovertemplate: `%{label}<br>${lang.totalSpinsLabel}: %{value:,.0f}<br>%{percent}<extra></extra>`
     }], {
       ...monthlyChartLayout(title, ''),
       margin: { l: 20, r: 20, t: 48, b: 20 },
@@ -2134,8 +2392,8 @@ function renderHomeDashboard(data) {
       <td class="${Number(row.ggr || 0) >= 0 ? 'profit-positive' : 'profit-negative'}">${formatCount(row.ggr)}</td>
     </tr>`).join('') : '<tr><td colspan="7">--</td></tr>';
   };
-  renderAgentPeriod('home-agent-7d-chart', 'home-agent-7d-body', data.agent_performance?.seven_day || [], currentLang === 'zh' ? '近 7 日 Agent Spin 占比' : '7-Day Agent Spin Share');
-  renderAgentPeriod('home-agent-day-chart', 'home-agent-day-body', data.agent_performance?.current_day || [], currentLang === 'zh' ? '當日 Agent Spin 占比' : 'Current-Day Agent Spin Share');
+  renderAgentPeriod('home-agent-7d-chart', 'home-agent-7d-body', data.agent_performance?.seven_day || [], lang.homeAgentSevenDayShare);
+  renderAgentPeriod('home-agent-day-chart', 'home-agent-day-body', data.agent_performance?.current_day || [], lang.homeAgentCurrentDayShare);
   renderPlayerRows('home-player-7d-body', data.player_alerts?.seven_day || [], sevenDayStart, referenceDate);
   renderPlayerRows('home-player-day-body', data.player_alerts?.current_day || [], referenceDate, referenceDate);
   homeStatus.textContent = '';
@@ -2148,7 +2406,7 @@ function loadHomeDashboard({ silent = false } = {}) {
     try {
       const response = await fetch('/api/home-dashboard');
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Home dashboard API request failed');
+      if (!response.ok) throw new Error(translations[currentLang].apiRequestFailed);
       homeDashboardCache = data;
       homeDashboardLoadedAt = Date.now();
       renderHomeDashboard(data);
@@ -2175,7 +2433,7 @@ function populateAgentSelect() {
   const rows = parentValue === 'ALL' ? [] : agentOptionRows.filter(row => String(row.parent_agent_id) === parentValue);
   const agents = [...new Map(rows.map(row => [String(row.agent_id), row])).values()];
   const agentIds = agents.map(row => String(row.agent_id));
-  agentSelect.innerHTML = '<option value="ALL">ALL</option>';
+  agentSelect.innerHTML = `<option value="ALL">${translations[currentLang].agentAll}</option>`;
   agents.forEach(row => {
     const agentId = String(row.agent_id);
     const option = document.createElement('option');
@@ -2207,13 +2465,13 @@ async function initializeAgentPage() {
     const [datesResponse, optionsResponse] = await Promise.all([fetch('/api/agent-dates'), fetch('/api/agent-options')]);
     const dates = await datesResponse.json();
     const options = await optionsResponse.json();
-    if (!datesResponse.ok) throw new Error(dates.error || 'Unable to load dates');
-    if (!optionsResponse.ok) throw new Error(options.error || 'Unable to load agents');
+    if (!datesResponse.ok) throw new Error(translations[currentLang].apiRequestFailed);
+    if (!optionsResponse.ok) throw new Error(translations[currentLang].apiRequestFailed);
     if (dates.length && (!gameLatestAvailableDate || dates[0] > gameLatestAvailableDate)) {
       gameLatestAvailableDate = dates[0];
     }
     agentOptionRows = options.agents || [];
-    agentParentSelect.innerHTML = '<option value="ALL">ALL</option>';
+    agentParentSelect.innerHTML = `<option value="ALL">${translations[currentLang].agentAll}</option>`;
     (options.parent_agents || []).forEach(parentId => {
       const option = document.createElement('option');
       option.value = String(parentId);
@@ -2286,7 +2544,7 @@ async function loadAgentGamePerformance(slotId) {
   try {
     const response = await fetch(`/api/agent-game-performance?${params}`);
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || 'Agent game performance request failed');
+    if (!response.ok) throw new Error(translations[currentLang].apiRequestFailed);
     if (requestId !== agentGamePerformanceRequestId || agentGameSelect.value !== String(slotId)) return;
     renderAgentGamePerformance(payload);
     agentStatus.textContent = translations[currentLang].agentLoaded;
@@ -2296,16 +2554,24 @@ async function loadAgentGamePerformance(slotId) {
   }
 }
 
-function matureRetentionPercent(row, field, dayOffset) {
+function retentionPercentIfAvailable(row, field, dayOffset, latestAvailableDate) {
   const value = row?.[field];
   const dnu = Number(row?.dnu);
   if (!Number.isFinite(dnu) || dnu <= 0) return null;
-  if (!row?.date || !gameLatestAvailableDate) return null;
+  if (!row?.date || !latestAvailableDate) return null;
   const observationDate = shiftGameDate(row.date, dayOffset);
-  if (observationDate >= gameLatestAvailableDate) return null;
+  if (observationDate >= latestAvailableDate) return null;
   if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return null;
   const number = Number(value);
   return Number.isFinite(number) ? number * 100 : null;
+}
+
+function matureRetentionPercent(row, field, dayOffset) {
+  return retentionPercentIfAvailable(row, field, dayOffset, gameLatestAvailableDate);
+}
+
+function monthlyRetentionPercent(row, field, dayOffset) {
+  return retentionPercentIfAvailable(row, field, dayOffset, monthlyLatestAvailableDate);
 }
 
 function retentionBarItems(row) {
@@ -2316,7 +2582,37 @@ function retentionBarItems(row) {
   ].filter(item => item.value !== null);
 }
 
+function sortDetailRows(rows, sortState) {
+  return [...rows].sort((a, b) => {
+    const left = a[sortState.key];
+    const right = b[sortState.key];
+    const stringKeys = new Set(['date', 'label', 'game_name', 'bet_type_label']);
+    const result = stringKeys.has(sortState.key)
+      ? String(left ?? '').localeCompare(String(right ?? ''), activeLocale(), { numeric: true })
+      : Number(left || 0) - Number(right || 0);
+    return sortState.direction === 'asc' ? result : -result;
+  });
+}
+
+function updateDetailSortHeaders(selector, sortState) {
+  document.querySelectorAll(selector).forEach(button => {
+    const key = button.dataset.gameDetailKey || button.dataset.agentDetailKey || button.dataset.agentGameDetailKey;
+    const baseLabel = button.dataset.label || button.textContent.replace(/\s[▲▼]$/, '');
+    button.dataset.label = baseLabel;
+    const active = key === sortState.key;
+    button.classList.toggle('active', active);
+    button.textContent = `${baseLabel}${active ? ` ${sortState.direction === 'asc' ? '▲' : '▼'}` : ''}`;
+  });
+}
+
+function toggleDetailSort(sortState, key) {
+  return sortState.key === key
+    ? { key, direction: sortState.direction === 'asc' ? 'desc' : 'asc' }
+    : { key, direction: key === 'date' || key.endsWith('label') ? 'asc' : 'desc' };
+}
+
 function renderAgentGamePerformance(payload) {
+  agentGamePerformanceCache = payload;
   const rows = payload.rows || [];
   const hourlyPlayers = payload.hourly_players || [];
   const medianByDate = new Map((payload.medians || []).map(row => [row.date, row.median_player_spin_count]));
@@ -2380,21 +2676,30 @@ function renderAgentGamePerformance(payload) {
 
   renderGameSpinDistribution(data, 'agent-game-spin-distribution-chart');
   const betTypes = [
-    { id: 1, label: `Bet 1 · ${lang.betTypeNormal}` },
-    { id: 2, label: `Bet 2 · ${lang.betTypeAnte}` },
-    { id: 3, label: `Bet 3 · ${lang.betTypeBuy}` }
+    { id: 1, label: lang.betTypeNormal },
+    { id: 2, label: lang.betTypeAnte },
+    { id: 3, label: lang.betTypeBuy }
   ];
-  document.getElementById('agent-game-daily-bet-body').innerHTML = data.flatMap(row => betTypes.map(betType => {
+  const detailRows = data.flatMap(row => betTypes.map(betType => {
     const prefix = `bet_${betType.id}`;
     const bet = Number(row[`${prefix}_total_bet_amount`] || 0);
     const win = Number(row[`${prefix}_total_win_amount`] || 0);
-    return `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(betType.label)}</td>
-      <td>${formatCount(row[`${prefix}_player_count`])}</td><td>${formatCount(row[`${prefix}_spin_count`])}</td>
-      <td>${formatCount(bet)}</td><td>${formatCount(win)}</td><td>${(bet ? win / bet * 100 : 0).toFixed(2)}%</td><td>${formatCount(bet - win)}</td></tr>`;
-  })).join('') || '<tr><td colspan="8" class="table-empty-message">--</td></tr>';
+    return {
+      date: row.date, bet_type_label: betType.label,
+      player_count: Number(row[`${prefix}_player_count`] || 0), spin_count: Number(row[`${prefix}_spin_count`] || 0),
+      bet_amount: bet, win_amount: win, rtp: bet ? win / bet * 100 : 0, ggr: bet - win
+    };
+  }));
+  updateDetailSortHeaders('[data-agent-game-detail-key]', agentGameDetailSort);
+  document.getElementById('agent-game-daily-bet-body').innerHTML = sortDetailRows(detailRows, agentGameDetailSort).map(row =>
+    `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.bet_type_label)}</td>
+      <td>${formatCount(row.player_count)}</td><td>${formatCount(row.spin_count)}</td>
+      <td>${formatCount(row.bet_amount)}</td><td>${formatCount(row.win_amount)}</td><td>${row.rtp.toFixed(2)}%</td><td>${formatCount(row.ggr)}</td></tr>`
+  ).join('') || '<tr><td colspan="8" class="table-empty-message">--</td></tr>';
 }
 
 function renderAgentAnalysis(data) {
+  const lang = translations[currentLang];
   agentAnalysisCache = data;
   const cube = data.cube || [];
   const details = data.details || [];
@@ -2406,7 +2711,7 @@ function renderAgentAnalysis(data) {
   const selectedGame = selectedGameId === 'ALL'
     ? null
     : games.find(row => String(row.slot_id) === selectedGameId);
-  const selectedGameName = selectedGame?.game_name || selectedGame?.slot_id || selectedGameId;
+  const selectedGameName = formatGameNameOnly(selectedGame?.slot_id || selectedGameId, selectedGame?.game_name);
   const common = { responsive: true, displaylogo: false, displayModeBar: false };
   let chartRows;
   let spinTitle;
@@ -2414,12 +2719,12 @@ function renderAgentAnalysis(data) {
 
   if (!parentSelected) {
     chartRows = aggregateAgentRows(cube, row => String(row.parent_agent_id), row => row.parent_agent_name || row.parent_agent_id);
-    spinTitle = currentLang === 'zh' ? 'Parent Agent Total Spin 占比' : 'Parent Agent Total Spin Share';
-    ggrTitle = currentLang === 'zh' ? '各 Parent Agent GGR' : 'GGR by Parent Agent';
+    spinTitle = lang.parentAgentSpinShare;
+    ggrTitle = lang.parentAgentGgr;
   } else if (!agentSelected) {
     chartRows = cube.map(row => ({ ...row, label: row.agent_name || row.agent_id }));
-    spinTitle = currentLang === 'zh' ? 'Agent Total Spin 占比（前 5 名）' : 'Agent Total Spin Share (Top 5)';
-    ggrTitle = currentLang === 'zh' ? '各 Agent GGR' : 'GGR by Agent';
+    spinTitle = lang.agentSpinShareTopFive;
+    ggrTitle = lang.agentGgr;
   } else {
     if (selectedGame) {
       chartRows = gameDetails
@@ -2427,12 +2732,12 @@ function renderAgentAnalysis(data) {
         .sort((a, b) => a.date.localeCompare(b.date))
         .map(row => ({ ...row, label: row.date }));
       const context = `${agentParentSelect.options[agentParentSelect.selectedIndex]?.text || agentParentSelect.value} / ${agentSelect.options[agentSelect.selectedIndex]?.text || agentSelect.value} / ${selectedGameName}`;
-      spinTitle = currentLang === 'zh' ? `${context} 每日 Total Spin` : `${context} Daily Total Spins`;
-      ggrTitle = currentLang === 'zh' ? `${context} 每日 GGR` : `${context} Daily GGR`;
+      spinTitle = lang.dailyTotalSpins.replace('{context}', context);
+      ggrTitle = lang.dailyGgr.replace('{context}', context);
     } else {
-      chartRows = games.map(row => ({ ...row, label: row.game_name || row.slot_id }));
-      spinTitle = currentLang === 'zh' ? '所有遊戲 Total Spin' : 'Total Spins by Game';
-      ggrTitle = currentLang === 'zh' ? '所有遊戲 GGR' : 'GGR by Game';
+      chartRows = games.map(row => ({ ...row, label: formatGameNameOnly(row.slot_id, row.game_name) }));
+      spinTitle = lang.totalSpinsByGame;
+      ggrTitle = lang.ggrByGame;
     }
   }
 
@@ -2441,21 +2746,21 @@ function renderAgentAnalysis(data) {
     let pieRows = ranked;
     if (parentSelected && ranked.length > 5) {
       pieRows = [...ranked.slice(0, 5), {
-        label: currentLang === 'zh' ? '其他' : 'Other',
+        label: lang.other,
         spin_count: ranked.slice(5).reduce((sum, row) => sum + Number(row.spin_count || 0), 0)
       }];
     }
     Plotly.newPlot('agent-spin-chart', [{
       labels: pieRows.map(row => row.label), values: pieRows.map(row => Number(row.spin_count || 0)),
       type: 'pie', hole: 0.42, textinfo: 'label+percent',
-      hovertemplate: '%{label}<br>Total Spin: %{value:,.0f}<br>%{percent}<extra></extra>'
+      hovertemplate: `%{label}<br>${lang.totalSpinsLabel}: %{value:,.0f}<br>%{percent}<extra></extra>`
     }], { ...monthlyChartLayout(spinTitle, ''), margin: { l: 20, r: 20, t: 48, b: 20 }, showlegend: false }, common);
   } else {
     const barRows = selectedGame ? chartRows : ranked;
     Plotly.newPlot('agent-spin-chart', [{
       x: barRows.map(row => row.label), y: barRows.map(row => Number(row.spin_count || 0)), type: 'bar',
-      marker: { color: '#6366f1' }, hovertemplate: '%{x}<br>Total Spin: %{y:,.0f}<extra></extra>'
-    }], monthlyChartLayout(spinTitle, 'Total Spin', { xaxis: { automargin: true } }), common);
+      marker: { color: '#6366f1' }, hovertemplate: `%{x}<br>${lang.totalSpinsLabel}: %{y:,.0f}<extra></extra>`
+    }], monthlyChartLayout(spinTitle, lang.totalSpinsLabel, { xaxis: { automargin: true } }), common);
   }
   Plotly.newPlot('agent-ggr-chart', [{
     x: chartRows.map(row => row.label), y: chartRows.map(row => Number(row.ggr || 0)), type: 'bar',
@@ -2467,12 +2772,12 @@ function renderAgentAnalysis(data) {
   gamePanel.hidden = !parentSelected || agentSelected;
   if (!gamePanel.hidden) {
     document.getElementById('agent-game-summary-body').innerHTML = games.length ? games.map(row => `<tr>
-      <td>${escapeHtml(row.game_name || String(row.slot_id))}</td><td>${formatCount(row.spin_count)}</td>
+      <td>${escapeHtml(formatGameNameOnly(row.slot_id, row.game_name))}</td><td>${formatCount(row.spin_count)}</td>
       <td>${formatCount(row.total_bet_amount)}</td><td>${formatCount(row.total_win_amount)}</td><td>${formatCount(row.ggr)}</td>
     </tr>`).join('') : '<tr><td colspan="5" class="table-empty-message">--</td></tr>';
   }
 
-  agentGameSelect.innerHTML = `<option value="ALL">${currentLang === 'zh' ? '全部遊戲' : 'All Games'}</option>`;
+  agentGameSelect.innerHTML = `<option value="ALL">${translations[currentLang].agentAllGames}</option>`;
   games.forEach(row => {
     const option = document.createElement('option');
     option.value = String(row.slot_id);
@@ -2492,19 +2797,21 @@ function renderAgentAnalysis(data) {
   let displayRows;
   if (agentSelected) {
     document.getElementById('agent-details-title').textContent = selectedGame
-      ? (currentLang === 'zh' ? `${selectedGameName} 每日明細` : `${selectedGameName} Daily Details`)
-      : (currentLang === 'zh' ? '所有遊戲每日明細（點擊選擇遊戲）' : 'Daily Game Details (click to select game)');
-    detailsHead.innerHTML = '<tr><th>Date</th><th>Game</th><th>Total Spin</th><th>Bet Amount</th><th>Win Amount</th><th>GGR</th></tr>';
+      ? lang.gameDailyDetails.replace('{game}', selectedGameName)
+      : lang.allGameDetails;
+    detailsHead.innerHTML = `<tr><th><button type="button" data-agent-detail-key="date">${lang.date}</button></th><th><button type="button" data-agent-detail-key="label">${lang.agentGame}</button></th><th><button type="button" data-agent-detail-key="spin_count">${lang.totalSpinsLabel}</button></th><th><button type="button" data-agent-detail-key="total_bet_amount">${lang.totalBet}</button></th><th><button type="button" data-agent-detail-key="total_win_amount">${lang.totalWin}</button></th><th><button type="button" data-agent-detail-key="ggr">GGR</button></th></tr>`;
     displayRows = gameDetails
       .filter(row => !selectedGame || String(row.slot_id) === selectedGameId)
-      .sort((a, b) => b.date.localeCompare(a.date) || Number(b.spin_count) - Number(a.spin_count));
-    detailsBody.innerHTML = displayRows.length ? displayRows.map(row => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.game_name || String(row.slot_id))}</td>
+      .map(row => ({ ...row, label: formatGameNameOnly(row.slot_id, row.game_name) }));
+    displayRows = sortDetailRows(displayRows, agentDetailSort);
+    updateDetailSortHeaders('[data-agent-detail-key]', agentDetailSort);
+    detailsBody.innerHTML = displayRows.length ? displayRows.map(row => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.label)}</td>
       <td>${formatCount(row.spin_count)}</td><td>${formatCount(row.total_bet_amount)}</td><td>${formatCount(row.total_win_amount)}</td><td>${formatCount(row.ggr)}</td></tr>`).join('') : '<tr><td colspan="6" class="table-empty-message">--</td></tr>';
     if (displayRows.length && !selectedGame) makeAgentRowsInteractive(detailsBody, displayRows, row => {
       agentGameSelect.value = String(row.slot_id);
       renderAgentAnalysis(agentAnalysisCache);
       saveUiState();
-    }, row => currentLang === 'zh' ? `選擇 ${row.game_name || row.slot_id}` : `Select ${row.game_name || row.slot_id}`);
+    }, row => lang.selectGame.replace('{game}', formatGameNameOnly(row.slot_id, row.game_name)));
   } else {
     const keyFor = parentSelected
       ? row => `${row.date}|${row.agent_id}`
@@ -2512,12 +2819,12 @@ function renderAgentAnalysis(data) {
     const labelFor = parentSelected
       ? row => row.agent_name || row.agent_id
       : row => row.parent_agent_name || row.parent_agent_id;
-    displayRows = aggregateAgentRows(details, keyFor, labelFor).sort((a, b) => b.date.localeCompare(a.date) || String(a.label).localeCompare(String(b.label)));
-    const entityHeading = parentSelected ? 'Agent' : 'Parent Agent';
+    displayRows = sortDetailRows(aggregateAgentRows(details, keyFor, labelFor), agentDetailSort);
+    const entityHeading = parentSelected ? lang.agentLabel : lang.agentParent;
     document.getElementById('agent-details-title').textContent = parentSelected
-      ? (currentLang === 'zh' ? 'Agent 每日明細（點擊下鑽）' : 'Daily Agent Details (click to drill down)')
-      : (currentLang === 'zh' ? 'Parent Agent 每日明細（點擊下鑽）' : 'Daily Parent Agent Details (click to drill down)');
-    detailsHead.innerHTML = `<tr><th>Date</th><th>${entityHeading}</th><th>Total Spin</th><th>Bet Amount</th><th>Win Amount</th><th>GGR</th></tr>`;
+      ? lang.agentDailyDetails : lang.parentAgentDailyDetails;
+    detailsHead.innerHTML = `<tr><th><button type="button" data-agent-detail-key="date">${lang.date}</button></th><th><button type="button" data-agent-detail-key="label">${entityHeading}</button></th><th><button type="button" data-agent-detail-key="spin_count">${lang.totalSpinsLabel}</button></th><th><button type="button" data-agent-detail-key="total_bet_amount">${lang.totalBet}</button></th><th><button type="button" data-agent-detail-key="total_win_amount">${lang.totalWin}</button></th><th><button type="button" data-agent-detail-key="ggr">GGR</button></th></tr>`;
+    updateDetailSortHeaders('[data-agent-detail-key]', agentDetailSort);
     detailsBody.innerHTML = displayRows.length ? displayRows.map(row => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(String(row.label))}</td>
       <td>${formatCount(row.spin_count)}</td><td>${formatCount(row.total_bet_amount)}</td><td>${formatCount(row.total_win_amount)}</td><td>${formatCount(row.ggr)}</td></tr>`).join('') : '<tr><td colspan="6" class="table-empty-message">--</td></tr>';
     if (displayRows.length) makeAgentRowsInteractive(detailsBody, displayRows, row => {
@@ -2529,7 +2836,7 @@ function renderAgentAnalysis(data) {
         updateAgentFilterVisibility();
       }
       loadAgentAnalysis();
-    }, row => currentLang === 'zh' ? `下鑽至 ${row.label}` : `Drill down to ${row.label}`);
+    }, row => lang.drillDown.replace('{entity}', row.label));
   }
 
   agentStatus.textContent = cube.length || details.length
@@ -2552,7 +2859,7 @@ async function loadAgentAnalysis() {
   try {
     const response = await fetch(`/api/agent-analysis?${params}`);
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Agent analysis API request failed');
+    if (!response.ok) throw new Error(translations[currentLang].apiRequestFailed);
     renderAgentAnalysis(data);
     saveUiState();
   } catch (error) {
@@ -2656,7 +2963,7 @@ function renderMonthlyCharts(rows) {
 
   Plotly.newPlot('monthly-rtp-chart', [
     { x: dates, y: rows.map(r => pct(r.rtp)), name: 'RTP', type: 'scatter', mode: 'lines+markers', line: { color: '#6366f1', width: 3 } },
-    { x: dates, y: rows.map(r => pct(r.odd_rtp)), name: 'Odd RTP', type: 'scatter', mode: 'lines+markers', line: { color: '#f59e0b', width: 2 } }
+    { x: dates, y: rows.map(r => pct(r.odd_rtp)), name: lang.oddRtp, type: 'scatter', mode: 'lines+markers', line: { color: '#f59e0b', width: 2 } }
   ], monthlyChartLayout(lang.chartDailyRtp, lang.axisRtp, {
     margin: { l: 55, r: 20, t: 58, b: 45 },
     legend: { orientation: 'h', x: 0.42, y: 1.15, xanchor: 'left', yanchor: 'top', font: { color: '#475569' }, bgcolor: 'rgba(255, 255, 255, 0.9)' },
@@ -2677,9 +2984,9 @@ function renderMonthlyCharts(rows) {
   ], monthlyChartLayout(lang.chartDnuRate, lang.axisDnuRate, { yaxis: { ticksuffix: '%', rangemode: 'tozero' } }), common);
 
   Plotly.newPlot('monthly-retention-chart', [
-    { x: dates, y: rows.map(r => pct(r.retention_1)), name: 'D1', type: 'scatter', mode: 'lines+markers', line: { color: '#10b981' } },
-    { x: dates, y: rows.map(r => pct(r.retention_3)), name: 'D3', type: 'scatter', mode: 'lines+markers', line: { color: '#f59e0b' } },
-    { x: dates, y: rows.map(r => pct(r.retention_7)), name: 'D7', type: 'scatter', mode: 'lines+markers', line: { color: '#ef4444' } }
+    { x: dates, y: rows.map(r => monthlyRetentionPercent(r, 'retention_1', 1)), name: 'D1', type: 'scatter', mode: 'lines+markers', connectgaps: false, line: { color: '#10b981' } },
+    { x: dates, y: rows.map(r => monthlyRetentionPercent(r, 'retention_3', 3)), name: 'D3', type: 'scatter', mode: 'lines+markers', connectgaps: false, line: { color: '#f59e0b' } },
+    { x: dates, y: rows.map(r => monthlyRetentionPercent(r, 'retention_7', 7)), name: 'D7', type: 'scatter', mode: 'lines+markers', connectgaps: false, line: { color: '#ef4444' } }
   ], monthlyChartLayout(lang.chartRetention, lang.axisRetention, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
 
   Plotly.newPlot('monthly-bet-type-chart', [
@@ -2709,7 +3016,7 @@ function renderMonthlyComparisonCharts(rows) {
     line: { color: colors[index], width: 2 }, marker: { color: colors[index] }
   }));
   const layout = (title, axis, extra = {}) => monthlyChartLayout(title, axis, {
-    xaxis: { title: currentLang === 'zh' ? '日期（日）' : 'Day of Month', dtick: 1 }, ...extra
+    xaxis: { title: lang.dayOfMonth, dtick: 1 }, ...extra
   });
   Plotly.newPlot('monthly-rtp-chart', traces(r => pct(r.rtp)), layout(lang.chartDailyRtp, lang.axisRtp, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
   Plotly.newPlot('monthly-ggr-chart', traces(r => money(r.total_bet_amount) - money(r.total_win_amount), 'bar'), layout(lang.chartDailyGgr, lang.axisGgr, { barmode: 'group' }), common);
@@ -2730,9 +3037,9 @@ function renderMonthlyComparisonCharts(rows) {
   Plotly.newPlot('monthly-dnu-chart', dnuTraces, layout(lang.chartDailyDnu, lang.axisPlayers), common);
   Plotly.newPlot('monthly-dnu-rate-chart', dnuRateTraces, layout(lang.chartDnuRate, lang.axisDnuRate, { yaxis: { ticksuffix: '%', rangemode: 'tozero' } }), common);
   const retentionLayout = label => layout(`${lang.chartRetention} (${label})`, lang.axisRetention, { yaxis: { tickformat: '.1f', ticksuffix: '%' } });
-  Plotly.newPlot('monthly-retention-chart', traces(r => pct(r.retention_1)), retentionLayout('D1'), common);
-  Plotly.newPlot('monthly-retention-3-chart', traces(r => pct(r.retention_3)), retentionLayout('D3'), common);
-  Plotly.newPlot('monthly-retention-7-chart', traces(r => pct(r.retention_7)), retentionLayout('D7'), common);
+  Plotly.newPlot('monthly-retention-chart', traces(r => monthlyRetentionPercent(r, 'retention_1', 1)), retentionLayout('D1'), common);
+  Plotly.newPlot('monthly-retention-3-chart', traces(r => monthlyRetentionPercent(r, 'retention_3', 3)), retentionLayout('D3'), common);
+  Plotly.newPlot('monthly-retention-7-chart', traces(r => monthlyRetentionPercent(r, 'retention_7', 7)), retentionLayout('D7'), common);
 }
 
 function updateMonthlyMetrics(rows) {
@@ -2754,13 +3061,14 @@ async function loadMonthlyDateDefaults() {
     const dates = await response.json();
     if (!Array.isArray(dates) || !dates.length) return;
     const latestDate = dates[0];
+    monthlyLatestAvailableDate = latestDate;
     latestAvailableMonth = latestDate.slice(0, 7);
     monthlyMonthSelect.value = latestAvailableMonth;
     monthlyEndMonth.value = monthlyMonthSelect.value;
     monthlyStartMonth.value = shiftMonth(monthlyEndMonth.value, -5);
     loadMonthlyData();
   } catch (error) {
-    monthlyStatus.textContent = translations[currentLang].monthlyDateError;
+    setLocalizedStatus(monthlyStatus, 'monthlyDateError');
   }
 }
 
@@ -2776,11 +3084,11 @@ async function loadMonthlyData() {
     const endIndex = monthIndex(monthlyEndMonth.value);
     if (startIndex === null || endIndex === null) return;
     if (startIndex > endIndex) {
-      monthlyStatus.textContent = translations[currentLang].monthlyRangeOrderError;
+      setLocalizedStatus(monthlyStatus, 'monthlyRangeOrderError');
       return;
     }
     if (endIndex - startIndex + 1 > 6) {
-      monthlyStatus.textContent = translations[currentLang].monthlyRangeLimitError;
+      setLocalizedStatus(monthlyStatus, 'monthlyRangeLimitError');
       return;
     }
     startRange = getCalendarMonthRange(monthlyStartMonth.value);
@@ -2799,13 +3107,19 @@ async function loadMonthlyData() {
   if (!startRange || !endRange) return;
   const startDate = startRange.startDate;
   const endDate = endRange.endDate;
-  monthlyStatus.textContent = translations[currentLang].monthlyLoading;
+  setLocalizedStatus(monthlyStatus, 'monthlyLoading');
   try {
+    if (!monthlyLatestAvailableDate) {
+      const datesResponse = await fetch('/api/dates');
+      const availableDates = await datesResponse.json();
+      if (!datesResponse.ok) throw new Error(translations[currentLang].apiRequestFailed);
+      monthlyLatestAvailableDate = Array.isArray(availableDates) ? (availableDates[0] || '') : '';
+    }
     const response = await fetch(`/api/monthly?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`);
     const rows = await response.json();
-    if (!response.ok) throw new Error(rows.error || 'Monthly API request failed');
+    if (!response.ok) throw new Error(translations[currentLang].apiRequestFailed);
     if (!rows.length) {
-      monthlyStatus.textContent = translations[currentLang].monthlyNoData;
+      setLocalizedStatus(monthlyStatus, 'monthlyNoData');
       if (requestedSingleMonth) {
         if (lastLoadedMonthlyMonth && lastLoadedMonthlyMonth !== requestedSingleMonth) {
           monthlyMonthSelect.value = lastLoadedMonthlyMonth;
@@ -2825,9 +3139,9 @@ async function loadMonthlyData() {
       monthlyGameRankingCache = [];
       renderMonthlyGameRanking();
     });
-    monthlyStatus.textContent = translations[currentLang].monthlyLoaded.replace('{start}', startDate).replace('{end}', endDate).replace('{days}', rows.length);
+    setLocalizedStatus(monthlyStatus, 'monthlyLoaded', { start: startDate, end: endDate, days: rows.length });
   } catch (error) {
-    monthlyStatus.textContent = translations[currentLang].monthlyLoadError.replace('{message}', error.message);
+    setLocalizedStatus(monthlyStatus, 'monthlyLoadError', { message: error.message });
   }
 }
 
@@ -2883,20 +3197,20 @@ function renderGameCharts(rows, selectedSlot, hourlyPlayers = []) {
     const spinByGame = new Map();
     rows.forEach(row => {
       const key = String(row.slot_id);
-      if (!spinByGame.has(key)) spinByGame.set(key, { name: row.game_name || key, spins: 0 });
+      if (!spinByGame.has(key)) spinByGame.set(key, { name: formatGameNameOnly(row.slot_id, row.game_name), spins: 0 });
       spinByGame.get(key).spins += Number(row.total_spin_count || 0);
     });
     const rankedGames = Array.from(spinByGame.values()).sort((a, b) => b.spins - a.spins);
     const topGames = rankedGames.slice(0, 10);
     const otherSpins = rankedGames.slice(10).reduce((sum, game) => sum + game.spins, 0);
     if (otherSpins > 0) topGames.push({ name: lang.otherGames, spins: otherSpins });
-    Plotly.newPlot('game-player-chart', [{ labels: topGames.map(game => game.name), values: topGames.map(game => game.spins), type: 'pie', textinfo: 'label+percent', hovertemplate: '%{label}<br>Total Spin: %{value:,.0f}<br>%{percent}<extra></extra>', hole: 0.35 }], monthlyChartLayout(lang.chartGameSpinShare, ''), common);
+    Plotly.newPlot('game-player-chart', [{ labels: topGames.map(game => game.name), values: topGames.map(game => game.spins), type: 'pie', textinfo: 'label+percent', hovertemplate: `%{label}<br>${lang.totalSpinsLabel}: %{value:,.0f}<br>%{percent}<extra></extra>`, hole: 0.35 }], monthlyChartLayout(lang.chartGameSpinShare, ''), common);
   } else {
     Plotly.newPlot('game-player-chart', [{ x: dates, y: data.map(r => Number(r.player_count || 0)), name: lang.axisPlayers, type: 'scatter', mode: 'lines+markers', line: { color: '#38bdf8', width: 3 } }], monthlyChartLayout(lang.chartGamePlayers, lang.axisPlayers), common);
   }
   if (singleDay) {
     Plotly.newPlot('game-ggr-chart', [{
-      x: rows.map(row => row.game_name || String(row.slot_id)),
+      x: rows.map(row => formatGameNameOnly(row.slot_id, row.game_name)),
       y: rows.map(row => Number(row.total_bet_amount || 0) - Number(row.total_win_amount || 0)),
       name: 'GGR', type: 'bar',
       marker: { color: rows.map(row => Number(row.total_bet_amount || 0) - Number(row.total_win_amount || 0) >= 0 ? '#10b981' : '#ef4444') }
@@ -2952,7 +3266,7 @@ function updateGameMetrics(rows, selectedSlot) {
   document.getElementById('game-days').textContent = formatCount(data.length);
 }
 
-function renderGameDailyBetStats(rows, selectedSlot) {
+function renderGameDailyBetStats(rows, selectedSlot, comparisonRows = [], comparisonSlot = '') {
   gameDailyBetPanel.hidden = selectedSlot === 'ALL' || !rows.length;
   if (gameDailyBetPanel.hidden) {
     gameDailyBetBody.innerHTML = '';
@@ -2961,13 +3275,18 @@ function renderGameDailyBetStats(rows, selectedSlot) {
 
   const lang = translations[currentLang];
   const betTypes = [
-    { id: 1, label: `Bet 1 · ${lang.betTypeNormal}` },
-    { id: 2, label: `Bet 2 · ${lang.betTypeAnte}` },
-    { id: 3, label: `Bet 3 · ${lang.betTypeBuy}` }
+    { id: 1, label: lang.betTypeNormal },
+    { id: 2, label: lang.betTypeAnte },
+    { id: 3, label: lang.betTypeBuy }
   ];
-  const dailyRows = [...rows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-
-  gameDailyBetBody.innerHTML = dailyRows.flatMap(row => betTypes.map(betType => {
+  const comparing = Boolean(comparisonSlot && comparisonRows.length);
+  const gameHeading = document.getElementById('game-daily-bet-game-heading');
+  gameHeading.hidden = !comparing;
+  const sourceGames = [
+    { rows, slot: selectedSlot, group: 'primary' },
+    ...(comparing ? [{ rows: comparisonRows, slot: comparisonSlot, group: 'secondary' }] : [])
+  ];
+  const detailRows = sourceGames.flatMap(game => game.rows.flatMap(row => betTypes.map(betType => {
     const prefix = `bet_${betType.id}`;
     const playerCount = Number(row[`${prefix}_player_count`] || 0);
     const spinCount = Number(row[`${prefix}_spin_count`] || 0);
@@ -2975,17 +3294,19 @@ function renderGameDailyBetStats(rows, selectedSlot) {
     const winAmount = Number(row[`${prefix}_total_win_amount`] || 0);
     const rtp = betAmount ? winAmount / betAmount * 100 : 0;
     const ggr = betAmount - winAmount;
-    return `<tr>
-      <td>${escapeHtml(row.date)}</td>
-      <td>${escapeHtml(betType.label)}</td>
-      <td>${formatCount(playerCount)}</td>
-      <td>${formatCount(spinCount)}</td>
-      <td>${formatCount(betAmount)}</td>
-      <td>${formatCount(winAmount)}</td>
-      <td>${rtp.toFixed(2)}%</td>
-      <td>${formatCount(ggr)}</td>
-    </tr>`;
-  })).join('');
+    return {
+      game_name: gameSeriesName(game.slot, game.rows), game_group: game.group,
+      date: row.date, bet_type_label: betType.label, player_count: playerCount, spin_count: spinCount,
+      bet_amount: betAmount, win_amount: winAmount, rtp, ggr
+    };
+  })));
+  updateDetailSortHeaders('[data-game-detail-key]', gameDetailSort);
+  gameDailyBetBody.innerHTML = sortDetailRows(detailRows, gameDetailSort).map(row => `<tr class="${comparing ? `game-comparison-${row.game_group}` : ''}">
+    ${comparing ? `<td>${escapeHtml(row.game_name)}</td>` : ''}<td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.bet_type_label)}</td>
+    <td>${formatCount(row.player_count)}</td><td>${formatCount(row.spin_count)}</td>
+    <td>${formatCount(row.bet_amount)}</td><td>${formatCount(row.win_amount)}</td>
+    <td>${row.rtp.toFixed(2)}%</td><td>${formatCount(row.ggr)}</td>
+  </tr>`).join('');
 }
 
 function clearExpandedMonthlyCube() {
@@ -3056,7 +3377,7 @@ document.addEventListener('keydown', event => {
   if (selectedOption) event.preventDefault();
 });
 
-function renderGameSpinDistribution(rows, chartId = 'game-spin-distribution-chart') {
+function renderGameSpinDistribution(rows, chartId = 'game-spin-distribution-chart', gameName = '') {
   const lang = translations[currentLang];
   const buckets = [
     ['dist_0_10', '[0,10)'], ['dist_10_20', '[10,20)'], ['dist_20_50', '[20,50)'],
@@ -3089,7 +3410,8 @@ function renderGameSpinDistribution(rows, chartId = 'game-spin-distribution-char
       hovertemplate: `${lang.chartMedianPlayerSpins}: %{y:,.1f}<extra></extra>`
     });
   }
-  Plotly.newPlot(chartId, traces, monthlyChartLayout(lang.chartGameSpinDistribution, '%', {
+  const chartTitle = gameName ? `${lang.chartGameSpinDistribution} · ${gameName}` : lang.chartGameSpinDistribution;
+  Plotly.newPlot(chartId, traces, monthlyChartLayout(chartTitle, '%', {
     barmode: 'stack',
     barnorm: 'percent',
     margin: { l: 55, r: 65, t: 48, b: 105 },
@@ -3120,6 +3442,79 @@ function renderGameSpinDistribution(rows, chartId = 'game-spin-distribution-char
   }), { responsive: true, displaylogo: false, displayModeBar: false });
 }
 
+function syncGameComparisonControls() {
+  const selectedSlot = gameSlotSelect.value || 'ALL';
+  const canCompare = selectedSlot !== 'ALL';
+  gameCompareToggleControl.hidden = !canCompare;
+  if (!canCompare) gameCompareCheckbox.checked = false;
+
+  const previousComparison = gameCompareSlotSelect.value;
+  const availableOptions = Array.from(gameSlotSelect.options).filter(option => option.value !== 'ALL' && option.value !== selectedSlot);
+  gameCompareSlotSelect.innerHTML = '';
+  availableOptions.forEach(source => {
+    const option = document.createElement('option');
+    option.value = source.value;
+    option.dataset.gameName = source.dataset.gameName || '';
+    option.textContent = source.textContent;
+    gameCompareSlotSelect.appendChild(option);
+  });
+  if (availableOptions.some(option => option.value === previousComparison)) gameCompareSlotSelect.value = previousComparison;
+  gameCompareCheckbox.disabled = availableOptions.length === 0;
+  gameCompareSelectControl.hidden = !canCompare || !gameCompareCheckbox.checked || availableOptions.length === 0;
+}
+
+function gameSeriesName(slotId, rows) {
+  const option = Array.from(gameSlotSelect.options).find(item => item.value === String(slotId));
+  return formatGameNameOnly(slotId, option?.dataset.gameName || rows[0]?.game_name);
+}
+
+function renderGameComparisonCharts(primaryRows, comparisonRows, primaryHourly, comparisonHourly, primarySlot, comparisonSlot) {
+  const lang = translations[currentLang];
+  const singleDay = gameStartDate.value === gameEndDate.value;
+  const common = { responsive: true, displaylogo: false, displayModeBar: false };
+  const games = [
+    { name: gameSeriesName(primarySlot, primaryRows), rows: primaryRows, hourly: primaryHourly, color: '#38bdf8' },
+    { name: gameSeriesName(comparisonSlot, comparisonRows), rows: comparisonRows, hourly: comparisonHourly, color: '#f97316' }
+  ];
+  const lineTraces = (value, suffix = '') => games.map(game => ({
+    x: game.rows.map(row => row.date), y: game.rows.map(value), name: `${game.name}${suffix}`,
+    type: 'scatter', mode: 'lines+markers', line: { color: game.color, width: 3 }
+  }));
+
+  gameDauDnuPanel.hidden = singleDay;
+  gameRtpPanel.hidden = singleDay;
+  gameRetentionPanel.hidden = false;
+  Plotly.newPlot('game-player-chart', lineTraces(row => Number(row.player_count || 0)), monthlyChartLayout(lang.chartGamePlayers, lang.axisPlayers), common);
+  Plotly.newPlot('game-ggr-chart', games.map(game => ({
+    x: singleDay ? [game.name] : game.rows.map(row => row.date),
+    y: game.rows.map(row => Number(row.total_bet_amount || 0) - Number(row.total_win_amount || 0)),
+    name: game.name, type: 'bar', marker: { color: game.color }
+  })), monthlyChartLayout(singleDay ? lang.chartGameGgrByGame : lang.chartGameGgr, lang.axisGgr, { barmode: 'group' }), common);
+
+  if (singleDay) {
+    Plotly.newPlot('game-retention-chart', games.map(game => {
+      const values = retentionBarItems(game.rows[0] || {});
+      return { x: values.map(item => item.label), y: values.map(item => item.value), name: game.name, type: 'bar', marker: { color: game.color } };
+    }), monthlyChartLayout(lang.chartGameRetention, lang.axisRetention, { barmode: 'group', yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
+  } else {
+    Plotly.newPlot('game-dau-dnu-chart', games.flatMap(game => [
+      { x: game.rows.map(row => row.date), y: game.rows.map(row => Number(row.player_count || 0)), name: `${game.name} DAU`, type: 'scatter', mode: 'lines+markers', line: { color: game.color, width: 3 } },
+      { x: game.rows.map(row => row.date), y: game.rows.map(row => Number(row.dnu || 0)), name: `${game.name} DNU`, type: 'scatter', mode: 'lines+markers', line: { color: game.color, width: 2, dash: 'dot' } }
+    ]), monthlyChartLayout(lang.chartGameDauDnu, lang.axisPlayers), common);
+    Plotly.newPlot('game-rtp-chart', lineTraces(row => Number(row.rtp || 0) * 100), monthlyChartLayout(lang.chartGameRtp, lang.axisRtp, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
+    Plotly.newPlot('game-retention-chart', games.flatMap(game => [
+      { x: game.rows.map(row => row.date), y: game.rows.map(row => matureRetentionPercent(row, 'retention_1', 1)), name: `${game.name} D1`, type: 'scatter', mode: 'lines+markers', connectgaps: false, line: { color: game.color } },
+      { x: game.rows.map(row => row.date), y: game.rows.map(row => matureRetentionPercent(row, 'retention_3', 3)), name: `${game.name} D3`, type: 'scatter', mode: 'lines+markers', connectgaps: false, line: { color: game.color, dash: 'dash' } },
+      { x: game.rows.map(row => row.date), y: game.rows.map(row => matureRetentionPercent(row, 'retention_7', 7)), name: `${game.name} D7`, type: 'scatter', mode: 'lines+markers', connectgaps: false, line: { color: game.color, dash: 'dot' } }
+    ]), monthlyChartLayout(lang.chartGameRetention, lang.axisRetention, { yaxis: { tickformat: '.1f', ticksuffix: '%' } }), common);
+  }
+  Plotly.newPlot('game-bet-type-chart', games.flatMap(game => [1, 2, 3].map((betType, index) => ({
+    x: game.hourly.map(row => row.hour), y: game.hourly.map(row => Number(row[`bet_${betType}_player_count`] || 0)),
+    name: `${game.name} ${[lang.betTypeNormal, lang.betTypeAnte, lang.betTypeBuy][index]}`,
+    type: 'scatter', mode: 'lines+markers', line: { color: game.color, dash: ['solid', 'dash', 'dot'][index] }
+  }))), monthlyChartLayout(singleDay ? lang.chartGameHourlyBetTypePlayers : lang.chartGameHourlyBetTypePlayersAverage, lang.axisPlayers, { xaxis: { dtick: 2 } }), common);
+}
+
 async function loadGameSpinMedians(startDate, endDate, slotId) {
   const params = new URLSearchParams({
     start_date: startDate,
@@ -3128,7 +3523,7 @@ async function loadGameSpinMedians(startDate, endDate, slotId) {
   });
   const response = await fetch(`/api/game-spin-medians?${params}`);
   const rows = await response.json();
-  if (!response.ok) throw new Error(rows.error || 'Game spin median API request failed');
+  if (!response.ok) throw new Error(translations[currentLang].apiRequestFailed);
   return rows;
 }
 
@@ -3144,7 +3539,7 @@ async function loadGameDateDefaults() {
     setGameDateMode();
     loadGameData();
   } catch (error) {
-    gameStatus.textContent = translations[currentLang].gameDateError;
+    setLocalizedStatus(gameStatus, 'gameDateError');
   }
 }
 
@@ -3185,6 +3580,8 @@ async function loadGameData() {
   const startDate = gameStartDate.value;
   const endDate = gameEndDate.value;
   const selectedSlot = gameSlotSelect.value || 'ALL';
+  syncGameComparisonControls();
+  const comparisonSlot = selectedSlot !== 'ALL' && gameCompareCheckbox.checked ? gameCompareSlotSelect.value : '';
   const rankingRequestId = ++gameRankingRequestId;
   const singleDay = startDate && startDate === endDate;
   const requestedSingleDate = gameDateModeSelect.value === 'single-day' ? gameSingleDate.value : '';
@@ -3197,17 +3594,18 @@ async function loadGameData() {
     retention: gameRetentionPanel.hidden
   } : null;
   gameSpinDistributionPanel.hidden = true;
+  gameCompareSpinDistributionPanel.hidden = true;
   gameDailyBetPanel.hidden = true;
   gameRankingPanel.hidden = true;
   gameDauDnuPanel.hidden = singleDay;
   gameRtpPanel.hidden = singleDay;
   gameRetentionPanel.hidden = false;
   if (!startDate || !endDate) return;
-  gameStatus.textContent = translations[currentLang].gameLoading;
+  setLocalizedStatus(gameStatus, 'gameLoading');
   try {
     const response = await fetch(`/api/game?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&slot_id=${encodeURIComponent(selectedSlot)}`);
     const rows = await response.json();
-    if (!response.ok) throw new Error(rows.error || 'Game API request failed');
+    if (!response.ok) throw new Error(translations[currentLang].apiRequestFailed);
     if (!rows.length) {
       if (requestedSingleDate) {
         if (lastLoadedGameSingleDate && lastLoadedGameSingleDate !== requestedSingleDate) {
@@ -3222,15 +3620,17 @@ async function loadGameData() {
         gameDauDnuPanel.hidden = previousPanelState.dauDnu;
         gameRtpPanel.hidden = previousPanelState.rtp;
         gameRetentionPanel.hidden = previousPanelState.retention;
-        gameStatus.textContent = translations[currentLang].gameNoData;
+        setLocalizedStatus(gameStatus, 'gameNoData');
         window.alert(translations[currentLang].gameDayNoData.replace('{date}', requestedSingleDate));
         return;
       }
       gameSpinDistributionCache = [];
+      gameComparisonDataCache = [];
+      gameComparisonSlotCache = '';
       gameRankingCache = [];
       gameDataCache = [];
       gameDailyBetBody.innerHTML = '';
-      gameStatus.textContent = translations[currentLang].gameNoData;
+      setLocalizedStatus(gameStatus, 'gameNoData');
       return;
     }
     if (requestedSingleDate) lastLoadedGameSingleDate = requestedSingleDate;
@@ -3241,12 +3641,12 @@ async function loadGameData() {
     });
     const hourlyResponse = await fetch(`/api/game-hourly-players?${hourlyParams}`);
     const hourlyRows = await hourlyResponse.json();
-    if (!hourlyResponse.ok) throw new Error(hourlyRows.error || 'Game hourly players API request failed');
+    if (!hourlyResponse.ok) throw new Error(translations[currentLang].apiRequestFailed);
     gameHourlyPlayersCache = hourlyRows;
     gameDataCache = rows;
     if (selectedSlot === 'ALL') {
       const games = new Map();
-      rows.forEach(row => games.set(String(row.slot_id), row.game_name || String(row.slot_id)));
+      rows.forEach(row => games.set(String(row.slot_id), formatGameNameOnly(row.slot_id, row.game_name)));
       const slots = [...games.keys()].sort((a, b) => Number(a) - Number(b));
       const current = gameSlotSelect.value;
       const lang = translations[currentLang];
@@ -3259,10 +3659,11 @@ async function loadGameData() {
         const option = document.createElement('option');
         option.value = slot;
         option.dataset.gameName = games.get(slot);
-        option.textContent = lang.gameOption.replace('{name}', games.get(slot)).replace('{slot}', slot);
+        option.textContent = lang.gameOption.replace('{name}', games.get(slot));
         gameSlotSelect.appendChild(option);
       });
       gameSlotSelect.value = slots.includes(current) ? current : 'ALL';
+      syncGameComparisonControls();
       if (pendingGameSlot && slots.includes(pendingGameSlot)) {
         gameSlotSelect.value = pendingGameSlot;
         pendingGameSlot = '';
@@ -3271,12 +3672,33 @@ async function loadGameData() {
         return;
       }
     }
+    let comparisonRows = [];
+    let comparisonHourlyRows = [];
+    if (comparisonSlot) {
+      const comparisonParams = new URLSearchParams({ start_date: startDate, end_date: endDate, slot_id: comparisonSlot });
+      const [comparisonResponse, comparisonHourlyResponse] = await Promise.all([
+        fetch(`/api/game?${comparisonParams}`),
+        fetch(`/api/game-hourly-players?${comparisonParams}`)
+      ]);
+      comparisonRows = await comparisonResponse.json();
+      comparisonHourlyRows = await comparisonHourlyResponse.json();
+      if (!comparisonResponse.ok || !comparisonHourlyResponse.ok) throw new Error(translations[currentLang].apiRequestFailed);
+    }
+    gameComparisonDataCache = comparisonRows;
+    gameComparisonSlotCache = comparisonRows.length ? comparisonSlot : '';
     updateGameMetrics(rows, selectedSlot);
-    renderGameCharts(rows, selectedSlot, gameHourlyPlayersCache);
-    renderGameDailyBetStats(rows, selectedSlot);
+    if (comparisonSlot && comparisonRows.length) {
+      renderGameComparisonCharts(rows, comparisonRows, gameHourlyPlayersCache, comparisonHourlyRows, selectedSlot, comparisonSlot);
+    } else {
+      renderGameCharts(rows, selectedSlot, gameHourlyPlayersCache);
+    }
+    renderGameDailyBetStats(rows, selectedSlot, comparisonRows, comparisonSlot);
     if (selectedSlot === 'ALL') {
       gameSpinDistributionCache = [];
+      gameComparisonDataCache = [];
+      gameComparisonSlotCache = '';
       gameSpinDistributionPanel.hidden = true;
+      gameCompareSpinDistributionPanel.hidden = true;
       loadGameRanking(startDate, endDate, rankingRequestId).catch(error => {
         if (rankingRequestId !== gameRankingRequestId) return;
         console.error('Failed to load game ranking:', error);
@@ -3289,24 +3711,38 @@ async function loadGameData() {
       gameRankingPanel.hidden = true;
       gameSpinDistributionCache = rows;
       gameSpinDistributionPanel.hidden = false;
-      renderGameSpinDistribution(rows);
-      loadGameSpinMedians(startDate, endDate, selectedSlot).then(medianRows => {
+      gameCompareSpinDistributionPanel.hidden = !comparisonSlot || !comparisonRows.length;
+      const primaryName = gameSeriesName(selectedSlot, rows);
+      const comparisonName = comparisonRows.length ? gameSeriesName(comparisonSlot, comparisonRows) : '';
+      renderGameSpinDistribution(rows, 'game-spin-distribution-chart', primaryName);
+      if (comparisonRows.length) renderGameSpinDistribution(comparisonRows, 'game-compare-spin-distribution-chart', comparisonName);
+      const medianRequests = [loadGameSpinMedians(startDate, endDate, selectedSlot)];
+      if (comparisonRows.length) medianRequests.push(loadGameSpinMedians(startDate, endDate, comparisonSlot));
+      Promise.all(medianRequests).then(([medianRows, comparisonMedianRows = []]) => {
         if (rankingRequestId !== gameRankingRequestId || gameSlotSelect.value !== selectedSlot) return;
         const medianByDate = new Map(medianRows.map(row => [row.date, row.median_player_spin_count]));
         gameSpinDistributionCache = rows.map(row => ({
           ...row,
           median_player_spin_count: medianByDate.has(row.date) ? medianByDate.get(row.date) : null
         }));
-        renderGameSpinDistribution(gameSpinDistributionCache);
+        renderGameSpinDistribution(gameSpinDistributionCache, 'game-spin-distribution-chart', primaryName);
+        if (comparisonRows.length) {
+          const comparisonMedianByDate = new Map(comparisonMedianRows.map(row => [row.date, row.median_player_spin_count]));
+          gameComparisonDataCache = comparisonRows.map(row => ({
+            ...row,
+            median_player_spin_count: comparisonMedianByDate.has(row.date) ? comparisonMedianByDate.get(row.date) : null
+          }));
+          renderGameSpinDistribution(gameComparisonDataCache, 'game-compare-spin-distribution-chart', comparisonName);
+        }
       }).catch(error => {
         if (rankingRequestId !== gameRankingRequestId) return;
         console.error('Failed to load game spin medians:', error);
-        gameStatus.textContent = translations[currentLang].gameMedianLoadError.replace('{message}', error.message);
+        setLocalizedStatus(gameStatus, 'gameMedianLoadError', { message: error.message });
       });
     }
-    gameStatus.textContent = translations[currentLang].gameLoaded.replace('{start}', startDate).replace('{end}', endDate);
+    setLocalizedStatus(gameStatus, 'gameLoaded', { start: startDate, end: endDate });
   } catch (error) {
-    gameStatus.textContent = translations[currentLang].gameLoadError.replace('{message}', error.message);
+    setLocalizedStatus(gameStatus, 'gameLoadError', { message: error.message });
   }
 }
 
@@ -3344,7 +3780,15 @@ agentGameSelect.addEventListener('change', () => {
   saveUiState();
   if (agentAnalysisCache) renderAgentAnalysis(agentAnalysisCache);
 });
-gameSlotSelect.addEventListener('change', loadGameData);
+gameSlotSelect.addEventListener('change', () => {
+  syncGameComparisonControls();
+  loadGameData();
+});
+gameCompareCheckbox.addEventListener('change', () => {
+  syncGameComparisonControls();
+  loadGameData();
+});
+gameCompareSlotSelect.addEventListener('change', loadGameData);
 gameDateModeSelect.addEventListener('change', () => {
   setGameDateMode();
   saveUiState();
@@ -3387,7 +3831,7 @@ document.querySelectorAll('[data-game-ranking-key]').forEach(button => {
 [monthlyModeSelect, monthlyMonthSelect, monthlyStartMonth, monthlyEndMonth, gameSingleDate, gameStartDate, gameEndDate, gameSlotSelect,
   agentParentSelect, agentSelect, agentGameSelect, agentStartDate, agentEndDate,
   dateModeSelect, dateSelect, dateStartSelect, dateEndSelect, minSpinsInput, maxSpinsInput,
-  playerSelect, checkboxNewPlayer, checkboxOldPlayer, checkboxWinPlayer, checkboxLosePlayer,
+  playerGameSelect, playerSelect, checkboxNewPlayer, checkboxOldPlayer, checkboxWinPlayer, checkboxLosePlayer,
   btnLangToggle].forEach(element => element.addEventListener('change', saveUiState));
 
 function restoreUiState() {
@@ -3424,6 +3868,7 @@ function restoreUiState() {
   containerRangeDate.style.display = dateModeSelect.value === 'range' ? 'block' : 'none';
   if (player.minSpins !== undefined) minSpinsInput.value = player.minSpins;
   if (player.maxSpins !== undefined) maxSpinsInput.value = player.maxSpins;
+  pendingPlayerGame = player.game ? String(player.game) : 'ALL';
   pendingPlayerId = player.playerId ? String(player.playerId) : '';
   ['newPlayer', 'oldPlayer', 'winPlayer', 'losePlayer'].forEach(key => {
     const element = { newPlayer: checkboxNewPlayer, oldPlayer: checkboxOldPlayer, winPlayer: checkboxWinPlayer, losePlayer: checkboxLosePlayer }[key];
@@ -3438,7 +3883,7 @@ function renderMonthlyGameRanking() {
   const { key, direction } = monthlyRankingSort;
   const rows = [...monthlyGameRankingCache].sort((a, b) => {
     const result = key === 'game_name'
-      ? String(a[key] || '').localeCompare(String(b[key] || ''), currentLang === 'zh' ? 'zh-Hant' : 'en')
+      ? String(a[key] || '').localeCompare(String(b[key] || ''), activeLocale())
       : Number(a[key] || 0) - Number(b[key] || 0);
     return direction === 'asc' ? result : -result;
   });
@@ -3462,11 +3907,11 @@ function renderMonthlyGameRanking() {
     return;
   }
   body.innerHTML = rows.map(row => `<tr>
-    <td><a href="#game-analysis" class="monthly-ranking-game-link">${escapeHtml(row.game_name || row.slot_id || '')}</a></td>
+    <td><a href="#game-analysis" class="monthly-ranking-game-link">${escapeHtml(formatGameNameOnly(row.slot_id, row.game_name))}</a></td>
     <td>${formatCount(row.days)}</td>
     <td>${formatCount(row.player_count)}</td>
-    <td>${Number(row.avg_spin_count || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-    <td>${Number(row.avg_bet_amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+    <td>${Number(row.avg_spin_count || 0).toLocaleString(activeLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+    <td>${Number(row.avg_bet_amount || 0).toLocaleString(activeLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
     <td>${formatCount(row.total_spin_count)}</td>
     <td>${formatCount(row.total_bet_amount)}</td>
     <td>${formatCount(row.total_win_amount)}</td>
@@ -3474,10 +3919,8 @@ function renderMonthlyGameRanking() {
   </tr>`).join('');
   body.querySelectorAll('.monthly-ranking-game-link').forEach((link, index) => {
     const game = rows[index];
-    const gameName = game.game_name || String(game.slot_id || '');
-    link.title = currentLang === 'zh'
-      ? `前往 ${gameName} 的遊戲績效分析`
-      : `Open game performance analysis for ${gameName}`;
+    const gameName = formatGameNameOnly(game.slot_id, game.game_name);
+    link.title = translations[currentLang].openGameAnalysis.replace('{game}', gameName);
     link.addEventListener('click', event => {
       event.preventDefault();
       gameDateModeSelect.value = 'custom';
@@ -3497,7 +3940,7 @@ function renderMonthlyGameRanking() {
 async function loadMonthlyGameRanking(startDate, endDate) {
   const response = await fetch(`/api/game-ranking?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`);
   const rows = await response.json();
-  if (!response.ok) throw new Error(rows.error || 'Game ranking API request failed');
+  if (!response.ok) throw new Error(translations[currentLang].apiRequestFailed);
   monthlyGameRankingRange = { startDate, endDate };
   monthlyGameRankingCache = Array.isArray(rows) ? rows : [];
   renderMonthlyGameRanking();
@@ -3508,7 +3951,7 @@ function renderGameRanking() {
   const { key, direction } = gameRankingSort;
   const rows = [...gameRankingCache].sort((a, b) => {
     const result = key === 'game_name'
-      ? String(a[key] || '').localeCompare(String(b[key] || ''), currentLang === 'zh' ? 'zh-Hant' : 'en')
+      ? String(a[key] || '').localeCompare(String(b[key] || ''), activeLocale())
       : Number(a[key] || 0) - Number(b[key] || 0);
     return direction === 'asc' ? result : -result;
   });
@@ -3531,11 +3974,11 @@ function renderGameRanking() {
     return;
   }
   body.innerHTML = rows.map(row => `<tr>
-    <td>${String(row.game_name || row.slot_id || '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character])}</td>
+    <td>${escapeHtml(formatGameNameOnly(row.slot_id, row.game_name))}</td>
     <td>${formatCount(row.days)}</td>
     <td>${formatCount(row.player_count)}</td>
-    <td>${Number(row.avg_spin_count || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-    <td>${Number(row.avg_bet_amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+    <td>${Number(row.avg_spin_count || 0).toLocaleString(activeLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+    <td>${Number(row.avg_bet_amount || 0).toLocaleString(activeLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
     <td>${formatCount(row.total_spin_count)}</td>
     <td>${formatCount(row.total_bet_amount)}</td>
     <td>${formatCount(row.total_win_amount)}</td>
@@ -3546,7 +3989,7 @@ function renderGameRanking() {
 async function loadGameRanking(startDate, endDate, requestId) {
   const response = await fetch(`/api/game-ranking?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`);
   const rows = await response.json();
-  if (!response.ok) throw new Error(rows.error || 'Game ranking API request failed');
+  if (!response.ok) throw new Error(translations[currentLang].apiRequestFailed);
   if (requestId !== gameRankingRequestId) return;
   gameRankingCache = Array.isArray(rows) ? rows : [];
   gameRankingPanel.hidden = false;
@@ -3567,6 +4010,7 @@ function initializeDashboard() {
   const activePage = restoreUiState();
   updateLanguageUI();
   loadAvailableDates();
+  loadPlayerGames();
   setActivePage(activePage);
   startHomeAutoRefresh();
   if (activePage === 'monthly' && monthlyMonthSelect.value) loadMonthlyData();
@@ -3577,6 +4021,38 @@ document.addEventListener('visibilitychange', () => {
   if (Date.now() - homeDashboardLoadedAt >= HOME_REFRESH_INTERVAL_MS) {
     loadHomeDashboard({ silent: true });
   }
+});
+
+btnOpenSinglePlayer.addEventListener('click', () => {
+  const playerId = playerSelect.value;
+  if (!playerId) return;
+  const startDate = dateModeSelect.value === 'single' ? dateSelect.value : dateStartSelect.value;
+  const endDate = dateModeSelect.value === 'single' ? dateSelect.value : dateEndSelect.value;
+  if (!startDate || !endDate) return;
+  singlePlayerName.value = playerId;
+  singlePlayerStartDate.value = startDate;
+  singlePlayerEndDate.value = endDate;
+  setLocalizedStatus(singlePlayerStatus, '');
+  setActivePage('single-player');
+  loadSinglePlayerData(playerId);
+});
+document.querySelectorAll('[data-game-detail-key]').forEach(button => {
+  button.addEventListener('click', () => {
+    gameDetailSort = toggleDetailSort(gameDetailSort, button.dataset.gameDetailKey);
+    renderGameDailyBetStats(gameDataCache, gameSlotSelect.value || 'ALL', gameComparisonDataCache, gameComparisonSlotCache);
+  });
+});
+document.querySelectorAll('[data-agent-game-detail-key]').forEach(button => {
+  button.addEventListener('click', () => {
+    agentGameDetailSort = toggleDetailSort(agentGameDetailSort, button.dataset.agentGameDetailKey);
+    if (agentGamePerformanceCache) renderAgentGamePerformance(agentGamePerformanceCache);
+  });
+});
+document.getElementById('agent-details-head').addEventListener('click', event => {
+  const button = event.target.closest('[data-agent-detail-key]');
+  if (!button) return;
+  agentDetailSort = toggleDetailSort(agentDetailSort, button.dataset.agentDetailKey);
+  if (agentAnalysisCache) renderAgentAnalysis(agentAnalysisCache);
 });
 
 window.fetch = async (...args) => {

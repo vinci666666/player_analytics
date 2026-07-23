@@ -1,6 +1,5 @@
 import os
 import sys
-import calendar
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from flask import Flask, jsonify, request, send_from_directory
@@ -20,6 +19,13 @@ if __package__:
         release_db_connection,
     )
     from .daily_backfill import start_daily_backfill_scheduler
+    from .feature_flags import is_sync_and_scheduling_enabled
+    from .player_filters import (
+        get_date_range_values,
+        parse_optional_slot_id,
+        parse_player_filters,
+        validate_date_range,
+    )
     from .security import configure_authentication
     from .server_audit import INFO, configure_server_action_logging, write_server_action
     from .slot_parent_bet_sync import start_slot_parent_bet_sync
@@ -37,6 +43,13 @@ else:
         release_db_connection,
     )
     from daily_backfill import start_daily_backfill_scheduler
+    from feature_flags import is_sync_and_scheduling_enabled
+    from player_filters import (
+        get_date_range_values,
+        parse_optional_slot_id,
+        parse_player_filters,
+        validate_date_range,
+    )
     from security import configure_authentication
     from server_audit import INFO, configure_server_action_logging, write_server_action
     from slot_parent_bet_sync import start_slot_parent_bet_sync
@@ -62,6 +75,7 @@ home_dashboard_cache = TtlCache(ttl_seconds=get_home_dashboard_cache_ttl())
 # Player filters are commonly submitted repeatedly while navigating back to the
 # analysis page. Keep this cache short because today's betting rows are live.
 players_cache = TtlCache(ttl_seconds=30, max_entries=256)
+player_games_cache = TtlCache(ttl_seconds=60, max_entries=128)
 
 LOCAL_TIME_ZONE = ZoneInfo("Asia/Taipei")
 
@@ -1470,35 +1484,14 @@ def refresh_home_dashboard_cache(inserted_count=0, affected_dates=frozenset()):
     return True
 
 
-def get_filter_args():
-    """Parse player filter query parameters shared by player list and data endpoints."""
-    try:
-        min_spins = int(request.args.get('min_spins', 0))
-        if min_spins < 0:
-            min_spins = 0
-    except ValueError:
-        min_spins = 0
-
-    try:
-        max_spins = int(request.args.get('max_spins', 10000))
-        if max_spins < 0:
-            max_spins = 10000
-    except ValueError:
-        max_spins = 10000
-
-    if max_spins < min_spins:
-        max_spins = min_spins
-
-    return {
-        "new_player": request.args.get('new_player') == 'true',
-        "old_player": request.args.get('old_player') == 'true',
-        "win_player": request.args.get('win_player') == 'true',
-        "lose_player": request.args.get('lose_player') == 'true',
-        "min_spins": min_spins,
-        "max_spins": max_spins,
-    }
-
-def build_filtered_players_subquery(start_date, end_date, filters, player_id_filter=None, use_summary=False):
+def build_filtered_players_subquery(
+    start_date,
+    end_date,
+    filters,
+    player_id_filter=None,
+    slot_id_filter=None,
+    use_summary=False,
+):
     """Build the reusable filtered-player subquery and params."""
     start_day, end_day, end_exclusive = get_date_range_values(start_date, end_date)
 
@@ -1595,6 +1588,10 @@ def build_filtered_players_subquery(start_date, end_date, filters, player_id_fil
         query += " AND p.player_id = %s"
         params.append(player_id_filter)
 
+    if slot_id_filter is not None:
+        query += " AND p.slot_id = %s"
+        params.append(slot_id_filter)
+
     # 新玩家：首次 spin 日期落在篩選日期範圍內；舊玩家：首次 spin 日期早於篩選開始日。
     if filters["new_player"] and not filters["old_player"]:
         query += " AND s.first_spin_date >= %s AND s.first_spin_date <= %s"
@@ -1619,42 +1616,46 @@ def build_filtered_players_subquery(start_date, end_date, filters, player_id_fil
     query += " HAVING " + " AND ".join(having_clauses)
     return query, params
 
-def add_one_calendar_month(date_value):
-    month = date_value.month + 1
-    year = date_value.year
-    if month > 12:
-        month = 1
-        year += 1
 
-    max_day = calendar.monthrange(year, month)[1]
-    return date_value.replace(year=year, month=month, day=min(date_value.day, max_day))
+@app.route('/api/player-games', methods=['GET'])
+def get_player_games():
+    """Return the game-name lookup without scanning the raw betting table."""
+    cache_key = ("all",)
+    cached_games = player_games_cache.get(cache_key)
+    if cached_games is not None:
+        return jsonify(cached_games)
 
-def validate_date_range(start_date, end_date, enforce_max_month=True):
+    conn = None
     try:
-        start = datetime.strptime(start_date, "%Y-%m-%d").date()
-        end = datetime.strptime(end_date, "%Y-%m-%d").date()
-    except ValueError:
-        return "日期格式錯誤，請使用 YYYY-MM-DD"
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        apply_query_timeout(cursor)
+        game_names = get_game_names(cursor)
+        games = sorted(
+            ({"slot_id": slot_id, "game_name": game_name}
+             for slot_id, game_name in game_names.items()),
+            key=lambda game: game["game_name"].casefold(),
+        )
+        player_games_cache.set(cache_key, games)
+        return jsonify(games)
+    except Exception as e:
+        print(f"查詢玩家分析遊戲清單失敗: {e}", file=sys.stderr)
+        return db_error_response(e)
+    finally:
+        if conn:
+            release_db_connection(conn)
 
-    if start > end:
-        return "開始日期必須小於或等於結束日期"
-
-    if enforce_max_month and end > add_one_calendar_month(start):
-        return "時間區間不可超過一個月"
-
-    return None
-
-def get_date_range_values(start_date, end_date):
-    start = datetime.strptime(start_date, "%Y-%m-%d").date()
-    end = datetime.strptime(end_date, "%Y-%m-%d").date()
-    return start, end, end + timedelta(days=1)
 
 @app.route('/api/players', methods=['GET'])
 def get_players():
     """獲取在特定日期或時間區間投注的玩家 ID 清單，支援多維度篩選（新/老玩家、贏/輸錢玩家、最大旋轉數）。"""
     start_date = request.args.get('start_date') or request.args.get('date')
     end_date = request.args.get('end_date') or request.args.get('date')
-    filters = get_filter_args()
+    filters = parse_player_filters(request.args)
+    try:
+        selected_slot = parse_optional_slot_id(request.args.get('slot_id'))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     
     if not start_date or not end_date:
         return jsonify({"error": "缺少必要參數 'start_date' 或 'end_date'"}), 400
@@ -1672,6 +1673,7 @@ def get_players():
         filters["lose_player"],
         filters["min_spins"],
         filters["max_spins"],
+        selected_slot,
     )
     cached_players = players_cache.get(cache_key)
     if cached_players is not None:
@@ -1683,8 +1685,14 @@ def get_players():
         cursor = conn.cursor()
         apply_query_timeout(cursor)
 
-        use_summary = is_player_daily_available(cursor)
-        subquery, params = build_filtered_players_subquery(start_date, end_date, filters, use_summary=use_summary)
+        use_summary = selected_slot is None and is_player_daily_available(cursor)
+        subquery, params = build_filtered_players_subquery(
+            start_date,
+            end_date,
+            filters,
+            slot_id_filter=selected_slot,
+            use_summary=use_summary,
+        )
         query = f"SELECT player_id FROM ({subquery}) filtered_players ORDER BY player_id;"
         cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
@@ -1707,13 +1715,17 @@ def get_data():
     player_id = request.args.get('player_id')
     player_name = (request.args.get('player_name') or '').strip()
     is_name_lookup = bool(player_name)
-    filters = get_filter_args()
+    filters = parse_player_filters(request.args)
+    try:
+        selected_slot = parse_optional_slot_id(request.args.get('slot_id'))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     
     if not start_date or not end_date or (not player_id and not player_name):
         return jsonify({"error": "缺少開始日期、結束日期，或玩家 ID／玩家名稱"}), 400
 
-    # 單獨玩家名稱查詢允許跨月；原玩家篩選分析仍維持一個月上限。
-    range_error = validate_date_range(start_date, end_date, enforce_max_month=not bool(player_name))
+    # 單獨玩家名稱查詢不限期間；玩家篩選分析維持一年上限。
+    range_error = validate_date_range(start_date, end_date, enforce_max_year=not bool(player_name))
     if range_error:
         return jsonify({"error": range_error}), 400
 
@@ -1746,9 +1758,14 @@ def get_data():
             # 名稱已解析成唯一 ID，不必再掃描並聚合整段期間的玩家清單。
             subquery, subparams = "SELECT %s::BIGINT", [player_id]
         else:
-            use_summary = is_player_daily_available(cursor)
+            use_summary = selected_slot is None and is_player_daily_available(cursor)
             subquery, subparams = build_filtered_players_subquery(
-                start_date, end_date, filters, player_id, use_summary=use_summary
+                start_date,
+                end_date,
+                filters,
+                player_id,
+                slot_id_filter=selected_slot,
+                use_summary=use_summary,
             )
         start_day, _, end_exclusive = get_date_range_values(start_date, end_date)
         today = datetime.now(LOCAL_TIME_ZONE).date()
@@ -1783,6 +1800,7 @@ def get_data():
             """
             spin_stats_params = [player_id]
 
+        slot_condition = "AND d.slot_id = %s" if selected_slot is not None else ""
         query = f"""
             SELECT 
                 d.player_id,
@@ -1808,10 +1826,13 @@ def get_data():
                 d.bet_at_utc7 >= %s AND d.bet_at_utc7 < %s
                 AND d.player_id IN ({subquery})
                 AND d.player_id = %s
+                {slot_condition}
             ORDER BY 
                 d.bet_at_utc7 ASC;
         """
         params = spin_stats_params + [start_day, end_exclusive] + subparams + [player_id]
+        if selected_slot is not None:
+            params.append(selected_slot)
             
         cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
@@ -1842,6 +1863,10 @@ if __name__ == '__main__':
     print("----------------------------------------------------------------")
     write_server_action(INFO, "Analytics server starting host=0.0.0.0 port=5000")
     refresh_home_dashboard_cache()
-    start_slot_parent_bet_sync(on_data_updated=refresh_home_dashboard_cache)
-    start_daily_backfill_scheduler()
+    if is_sync_and_scheduling_enabled(load_config()):
+        start_slot_parent_bet_sync(on_data_updated=refresh_home_dashboard_cache)
+        start_daily_backfill_scheduler()
+    else:
+        print("Data synchronization and scheduling are disabled by config.json")
+        write_server_action(INFO, "Data synchronization and scheduling disabled by configuration")
     app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)

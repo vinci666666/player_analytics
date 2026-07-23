@@ -272,9 +272,15 @@ body.auth-locked .login-screen {
 
 .global-data-loading {
   position: fixed;
-  top: 1rem;
-  left: 50%;
+  inset: 0;
   z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  cursor: wait;
+}
+.global-data-loading-content {
   display: flex;
   align-items: center;
   gap: 0.65rem;
@@ -286,7 +292,6 @@ body.auth-locked .login-screen {
   font-size: 0.88rem;
   font-weight: 600;
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
-  transform: translateX(-50%);
 }
 .global-data-loading[hidden] { display: none; }
 .global-data-loading-spinner {
@@ -323,6 +328,21 @@ main.player-page .analytics-content { grid-column: 2; grid-row: 2; }
 .player-filter-panel .player-type-filter > label { flex-basis: 100%; }
 .player-filter-panel .player-type-filter > div { flex: 0 0 auto; }
 .player-filter-panel #container-range-date { grid-column: span 2; }
+.player-filter-panel .player-id-control { grid-column: span 2; }
+.player-id-select-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem; }
+.player-analysis-button {
+  min-width: 118px;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--primary);
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.player-analysis-button:not(:disabled):hover { background: rgba(99, 102, 241, 0.1); }
+.player-analysis-button:disabled { cursor: not-allowed; opacity: 0.55; }
 .player-filter-panel #btn-apply-filters { width: auto; min-width: 110px; align-self: end; }
 
 @media (max-width: 1250px) {
@@ -339,7 +359,11 @@ main.player-page .analytics-content { grid-column: 2; grid-row: 2; }
 
 @media (max-width: 700px) {
   .player-filter-panel { grid-template-columns: 1fr; }
-  .player-filter-panel .player-type-filter, .player-filter-panel #container-range-date { grid-column: 1; }
+  .player-filter-panel .player-type-filter,
+  .player-filter-panel #container-range-date,
+  .player-filter-panel .player-id-control { grid-column: 1; }
+  .player-id-select-row { grid-template-columns: 1fr; }
+  .player-analysis-button { width: 100%; min-height: 44px; }
 }
 
 .form-group {
@@ -489,6 +513,10 @@ select.form-control {
 .home-agent-chart { min-height: 320px; }
 .game-analysis-content { grid-column: 2 / -1; display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
 .game-analysis-content[hidden] { display: none; }
+.game-compare-control { align-self: end; }
+.game-compare-control[hidden] { display: none; }
+.game-compare-checkbox { min-height: 43px; display: flex; align-items: center; gap: 0.45rem; color: var(--text-primary); white-space: nowrap; cursor: pointer; }
+.game-compare-checkbox input { width: 1rem; height: 1rem; accent-color: var(--primary); }
 .agent-analysis-content { grid-column: 2 / -1; display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
 .agent-analysis-content[hidden] { display: none; }
 .single-player-analysis-content { grid-column: 2; min-width: 0; }
@@ -595,6 +623,10 @@ select.form-control {
 .table-empty-message { text-align: center !important; color: var(--text-secondary); padding: 2rem !important; }
 .game-daily-bet-table tbody tr:nth-child(3n + 1) td { border-top: 2px solid rgba(99,102,241,0.18); }
 .game-daily-bet-table tbody tr:first-child td { border-top: 0; }
+.game-daily-bet-table tbody tr.game-comparison-primary { background: rgba(56,189,248,0.08); }
+.game-daily-bet-table tbody tr.game-comparison-secondary { background: rgba(249,115,22,0.09); }
+.game-daily-bet-table tbody tr.game-comparison-primary:hover { background: rgba(56,189,248,0.15); }
+.game-daily-bet-table tbody tr.game-comparison-secondary:hover { background: rgba(249,115,22,0.16); }
 .monthly-status { min-height: 1.25rem; color: var(--text-secondary); font-size: 0.85rem; }
 main.monthly-page .control-sidebar, main.monthly-page .analytics-content { display: none; }
 main.monthly-page { grid-template-columns: 210px 1fr; }
@@ -909,5 +941,148 @@ table.data-table tr:hover {
   background: var(--primary);
   border-color: var(--primary);
   box-shadow: 0 0 10px var(--primary-glow);
+}
+
+/* Responsive layout: keep the desktop dashboard intact while making every
+   analysis view usable on touch-sized screens. */
+@media (max-width: 1024px) {
+  header {
+    padding: 1rem 1.25rem;
+    gap: 1rem;
+  }
+
+  header h1 { min-width: 0; }
+  .header-right { gap: 0.75rem; }
+  .legend-pills { display: none; }
+
+  main {
+    width: 100%;
+    padding: 1.25rem;
+    gap: 1.25rem;
+  }
+
+  .page-navigation {
+    overflow: hidden;
+    padding: 0.75rem;
+  }
+
+  .page-navigation-header { display: none; }
+  .page-nav-list { overflow-x: auto; scrollbar-width: thin; }
+  .page-nav-item { min-width: 0; padding: 0.7rem 0.45rem; }
+  .page-nav-icon { flex: 0 0 auto; }
+
+  .monthly-metrics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .monthly-analysis-content .monthly-chart-panel.monthly-cube-expanded {
+    transform: none;
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.18);
+  }
+}
+
+@media (max-width: 700px) {
+  header {
+    position: static;
+    align-items: flex-start;
+    padding: 0.85rem 1rem;
+  }
+
+  header h1 {
+    flex-wrap: wrap;
+    gap: 0.25rem 0.45rem;
+    font-size: 1.05rem;
+    line-height: 1.25;
+  }
+
+  header h1 #nav-subtitle {
+    flex-basis: 100%;
+    font-size: 0.72rem;
+  }
+
+  .badge-version { font-size: 0.62rem; }
+  .header-right { flex: 0 0 auto; gap: 0.4rem; }
+  .btn-lang { min-height: 40px; padding: 0.45rem 0.6rem; }
+
+  main { padding: 0.75rem; gap: 0.85rem; }
+  .page-navigation { margin: 0 -0.75rem; border-width: 1px 0; border-radius: 0; }
+  .page-nav-list {
+    display: flex;
+    gap: 0.4rem;
+    padding-bottom: 0.15rem;
+    scroll-snap-type: x proximity;
+  }
+  .page-nav-item {
+    flex: 0 0 auto;
+    min-height: 44px;
+    padding: 0.65rem 0.75rem;
+    scroll-snap-align: start;
+  }
+
+  .panel { padding: 1rem; border-radius: 12px; }
+  .panel-title { margin-bottom: 0.9rem; font-size: 1rem; }
+  .analytics-content,
+  .monthly-analysis-content,
+  .home-analysis-content,
+  .game-analysis-content,
+  .agent-analysis-content { gap: 0.85rem; }
+
+  .monthly-toolbar,
+  .game-toolbar { align-items: stretch; flex-direction: column; gap: 0.9rem; }
+  .monthly-date-controls,
+  .monthly-compare-controls,
+  .game-custom-date-controls { align-items: stretch; flex-direction: column; }
+  .monthly-control-field,
+  .monthly-date-controls .form-control,
+  .game-slot-select { width: 100% !important; }
+  .monthly-month-navigation,
+  .game-day-navigation { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; }
+  .monthly-range-separator { align-self: center; padding: 0; text-align: center; }
+  .monthly-load-button { width: 100%; min-height: 44px; }
+
+  .agent-filter-controls { grid-template-columns: 1fr; }
+  .agent-filter-controls .btn-primary { grid-column: 1; min-height: 44px; }
+  .single-player-controls .btn-primary,
+  .player-filter-panel #btn-apply-filters { width: 100%; min-height: 44px; }
+
+  .home-kpi-grid,
+  .monthly-metrics-grid,
+  .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric-card { min-width: 0; padding: 0.7rem; }
+  .metric-label { font-size: 0.66rem; }
+  .metric-value { font-size: clamp(0.78rem, 3.6vw, 1rem); }
+
+  .monthly-charts-grid,
+  .agent-charts-grid,
+  .home-two-column { grid-template-columns: minmax(0, 1fr); }
+  .chart-container { height: 360px; }
+  .monthly-chart { height: 300px; }
+  .home-ggr-chart { height: 320px; }
+  .home-agent-chart { min-height: 290px; }
+
+  .monthly-ranking-table-wrap,
+  .table-wrapper {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .monthly-ranking-table,
+  table.data-table { min-width: max-content; }
+  .monthly-ranking-table th,
+  .monthly-ranking-table td,
+  table.data-table th,
+  table.data-table td { padding: 0.6rem 0.65rem; }
+
+  .login-screen { min-height: 100svh; }
+  body.auth-locked .login-screen { padding: 1rem; }
+  .login-card { padding: 1.5rem; }
+  .navigation-toast { top: 0.75rem; width: calc(100vw - 1.5rem); }
+}
+
+@media (max-width: 420px) {
+  header h1 #nav-subtitle { display: none; }
+  .btn-lang { font-size: 0.72rem; padding-inline: 0.5rem; }
+  .home-kpi-grid,
+  .monthly-metrics-grid,
+  .metrics-grid { grid-template-columns: 1fr; }
+  .chart-container { height: 320px; }
+  .monthly-chart { height: 280px; }
 }
 

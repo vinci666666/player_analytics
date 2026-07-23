@@ -21,6 +21,16 @@ export function isDateRangeOverOneMonth(startDate, endDate) {
   return end > addOneCalendarMonth(start);
 }
 
+export function isDateRangeOverOneYear(startDate, endDate) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  const maxEnd = new Date(start.getTime());
+  const originalMonth = maxEnd.getMonth();
+  maxEnd.setFullYear(maxEnd.getFullYear() + 1);
+  if (maxEnd.getMonth() !== originalMonth) maxEnd.setDate(0);
+  return end > maxEnd;
+}
+
 export function getDefaultRangeStartDate(dates, endDate) {
   const end = new Date(`${endDate}T00:00:00`);
   const minStart = new Date(end.getTime());

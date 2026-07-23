@@ -20,6 +20,7 @@
     "user": "postgres",
     "password": "5zrIHjxYiJan29Q"
   },
+  "syncAndSchedulingEnabled": true,
   "slotParentBetSync": {
     "interval_seconds": 600,
     "batch_size": 10000
