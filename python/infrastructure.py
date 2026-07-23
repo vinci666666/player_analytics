@@ -1,4 +1,4 @@
-"""Shared configuration and PostgreSQL infrastructure for the analytics API."""
+"""分析 API 共用的設定、PostgreSQL 與快取基礎設施。 / Shared configuration, PostgreSQL, and cache infrastructure."""
 
 import json
 import os
@@ -31,7 +31,7 @@ _lookup_refresh_lock = Lock()
 
 
 def load_config():
-    """Load and cache project configuration, invalidating when the file changes."""
+    """載入並快取設定；檔案異動時自動失效。 / Load and cache config, invalidating it after file changes."""
     global _config_cache, _config_mtime
     defaults = {"localDB": LOCAL_DB_DEFAULTS.copy()}
     try:
@@ -66,6 +66,7 @@ def load_config():
 
 
 def _lookup_dict(cursor, table_name, id_column, name_column):
+    """將名稱表轉為 ID 對名稱字典。 / Convert a lookup table into an ID-to-name dictionary."""
     cursor.execute(
         f"SELECT {id_column}, {name_column} FROM public.{table_name} ORDER BY {id_column}"
     )
@@ -76,7 +77,7 @@ def _lookup_dict(cursor, table_name, id_column, name_column):
 
 
 def _refresh_name_lookup(lookup_name):
-    """Refresh one local lookup table from pro_central in its own transaction."""
+    """以獨立交易從 pro_central 更新本機名稱表。 / Refresh one local lookup in its own transaction."""
     with _lookup_refresh_lock:
         config = load_config()
         source_config = config.get("pro_central")
@@ -146,11 +147,12 @@ def _refresh_name_lookup(lookup_name):
 
 
 def _required_ids_missing(lookup, required_ids):
+    """檢查呼叫端需要的 ID 是否未在快取中。 / Check whether requested IDs are missing from a lookup."""
     return bool({str(item_id) for item_id in (required_ids or ()) if item_id is not None} - lookup.keys())
 
 
 def get_game_names(cursor=None, required_ids=None):
-    """Return game names, refreshing once when a requested ID is missing."""
+    """回傳遊戲名稱；缺少指定 ID 時最多刷新一次。 / Return game names, refreshing once for missing IDs."""
     owns_connection = cursor is None
     connection = None
     try:
@@ -168,7 +170,7 @@ def get_game_names(cursor=None, required_ids=None):
 
 
 def get_agent_names(cursor=None, required_ids=None):
-    """Return agent names, refreshing once when a requested ID is missing."""
+    """回傳 Agent 名稱；缺少指定 ID 時最多刷新一次。 / Return agent names, refreshing once for missing IDs."""
     owns_connection = cursor is None
     connection = None
     try:
@@ -186,11 +188,12 @@ def get_agent_names(cursor=None, required_ids=None):
 
 
 def get_local_db_config():
-    """Return the local PostgreSQL connection settings from config.json."""
+    """取得本機 PostgreSQL 連線設定副本。 / Return a copy of local PostgreSQL settings."""
     return load_config()["localDB"].copy()
 
 
 def _initialize_pool():
+    """延遲建立程序共用的資料庫連線池。 / Lazily initialize the process-wide connection pool."""
     global _db_pool
     config = get_local_db_config()
     _db_pool = ThreadedConnectionPool(
@@ -201,6 +204,7 @@ def _initialize_pool():
 
 
 def get_db_connection():
+    """從連線池借用一條連線。 / Borrow one connection from the pool."""
     global _db_pool
     if _db_pool is None:
         with _pool_lock:
@@ -212,6 +216,7 @@ def get_db_connection():
 
 
 def release_db_connection(connection):
+    """安全回收連線；無法回收時關閉。 / Safely return a connection, closing it on pool errors."""
     if not _db_pool or not connection:
         return
     try:
@@ -223,10 +228,12 @@ def release_db_connection(connection):
 
 
 def apply_query_timeout(cursor):
+    """為目前交易套用查詢逾時。 / Apply the statement timeout to the current transaction."""
     cursor.execute("SET LOCAL statement_timeout = %s", (QUERY_TIMEOUT_MS,))
 
 
 def db_error_response(error):
+    """記錄資料庫例外並建立一致的 HTTP 500 回應。 / Log a DB exception and build a consistent HTTP 500 response."""
     error_text = str(error)
     try:
         if __package__:
@@ -242,7 +249,7 @@ def db_error_response(error):
 
 
 def is_player_daily_available(cursor):
-    """Return whether the compact player/day aggregate table is available."""
+    """確認精簡玩家日彙總表是否存在。 / Return whether the compact player/day aggregate table exists."""
     cursor.execute("""
         SELECT COALESCE((SELECT c.relkind IN ('r', 'p')
                          FROM pg_class c WHERE c.oid = to_regclass(%s)), false)
@@ -253,15 +260,17 @@ def is_player_daily_available(cursor):
 
 
 class TtlCache:
-    """Small process-local TTL cache for read-heavy dashboard responses."""
+    """適用於讀取密集儀表板的小型程序內 TTL 快取。 / Small process-local TTL cache for read-heavy responses."""
 
     def __init__(self, ttl_seconds, max_entries=None):
+        """建立具可選容量上限的快取。 / Create a cache with an optional entry limit."""
         self.ttl_seconds = ttl_seconds
         self.max_entries = max_entries
         self._values = {}
         self._lock = Lock()
 
     def get(self, key):
+        """取得未過期值；過期時同步移除。 / Return a live value and remove it when expired."""
         with self._lock:
             item = self._values.get(key)
             if not item:
@@ -273,6 +282,7 @@ class TtlCache:
             return value
 
     def set(self, key, value):
+        """寫入值並在超過容量時淘汰最舊項目。 / Store a value and evict the oldest item at capacity."""
         with self._lock:
             now = datetime.utcnow().timestamp()
             if self.max_entries is not None:
@@ -287,12 +297,12 @@ class TtlCache:
             self._values[key] = (now + self.ttl_seconds, value)
 
     def clear(self):
-        """Remove every cached value."""
+        """清除全部快取值。 / Remove every cached value."""
         with self._lock:
             self._values.clear()
 
     def set_ttl_seconds(self, ttl_seconds):
-        """Update the TTL used by future cache writes."""
+        """更新後續寫入採用的 TTL。 / Update the TTL used by future writes."""
         if ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be positive")
         with self._lock:

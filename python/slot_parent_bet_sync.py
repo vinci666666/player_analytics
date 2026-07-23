@@ -1,4 +1,4 @@
-"""Periodic incremental synchronization for public.slot_parent_bet."""
+"""public.slot_parent_bet 的週期增量同步器。 / Periodic incremental synchronizer for public.slot_parent_bet."""
 
 import sys
 import threading
@@ -32,6 +32,7 @@ _data_updated_callback = None
 
 
 def _log(message, *, error=False):
+    """輸出同步訊息並寫入稽核表。 / Emit a sync message and persist it in the audit table."""
     timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
     print(
         f"[{timestamp}] [slot_parent_bet sync] {message}",
@@ -42,18 +43,21 @@ def _log(message, *, error=False):
 
 
 def _connect(database_config):
+    """依設定建立不自動提交的 PostgreSQL 連線。 / Open a non-autocommit PostgreSQL connection."""
     connection_config = database_config.copy()
     connection_config.setdefault("connect_timeout", 5)
     return psycopg2.connect(**connection_config)
 
 
 def _positive_integer(value, setting_name):
+    """驗證必須為正整數的同步設定。 / Validate a sync setting that must be a positive integer."""
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"{setting_name} must be a positive integer")
     return value
 
 
 def _load_sync_settings():
+    """載入同步週期與批次大小。 / Load the synchronization interval and batch size."""
     sync_config = load_config().get("slotParentBetSync", {})
     if not isinstance(sync_config, dict):
         raise ValueError("config.json slotParentBetSync must contain a JSON object")
@@ -69,6 +73,7 @@ def _load_sync_settings():
 
 
 def _common_columns(source_cursor, local_cursor):
+    """比對來源與本機表結構，決定可安全複製的欄位。 / Find columns safe to copy between source and local tables."""
     source_cursor.execute(
         """
         SELECT column_name, data_type
@@ -134,6 +139,7 @@ def _common_columns(source_cursor, local_cursor):
 
 
 def _read_local_cursor(local_cursor, cursor_columns):
+    """讀取本機最後同步游標作為增量起點。 / Read the local high-water mark for incremental sync."""
     selected_columns = sql.SQL(", ").join(map(sql.Identifier, cursor_columns))
     order_columns = sql.SQL(", ").join(
         sql.SQL("{} DESC NULLS LAST").format(sql.Identifier(column))
@@ -151,7 +157,7 @@ def _read_local_cursor(local_cursor, cursor_columns):
 
 
 def _append_local_time(rows, bet_at_index):
-    """Append bet_at_utc7 while preserving the source UTC bet_at value."""
+    """保留來源 UTC 時間並附加 UTC+7 投注時間。 / Preserve source UTC time and append bet_at_utc7."""
     prepared_rows = []
     for row in rows:
         bet_at = row[bet_at_index]
@@ -162,7 +168,7 @@ def _append_local_time(rows, bet_at_index):
 
 
 def _refresh_player_stats(local_cursor, player_ids):
-    """Rebuild exact player_stats totals for players touched by a sync batch."""
+    """精確重建本批受影響玩家的 player_stats。 / Rebuild exact player_stats totals for touched players."""
     unique_player_ids = sorted(set(player_ids))
     if not unique_player_ids:
         return 0
@@ -201,7 +207,7 @@ def _refresh_player_stats(local_cursor, player_ids):
 
 
 def sync_one_batch(batch_size, *, return_dates=False):
-    """Copy one incremental batch and optionally return its affected dates."""
+    """複製一批增量資料，並可回傳受影響日期。 / Copy one incremental batch and optionally return affected dates."""
     config = load_config()
     source_config = config.get("sourceDB")
     local_config = config.get("localDB")
@@ -328,6 +334,7 @@ def sync_one_batch(batch_size, *, return_dates=False):
 
 
 def _run_sync_cycle():
+    """反覆同步至追上來源，再等待下一週期。 / Synchronize until caught up, then wait for the next cycle."""
     batch_number = 0
     pending_aggregate_dates = set()
     last_catchup_refresh_date = None
@@ -357,9 +364,8 @@ def _run_sync_cycle():
             )
             pending_aggregate_dates.update(affected_dates)
 
-            # A short/empty batch means the incremental cursor has caught up.
-            # Rebuild all dates touched since the previous catch-up so the
-            # aggregate tables stay aligned with newly inserted raw facts.
+            # 短批次或空批次代表游標追上來源；此時重建本輪所有受影響日期。
+            # A short or empty batch means the cursor caught up; rebuild all dates touched this cycle.
             today = datetime.now(TIME_ZONE).date()
             if inserted_count < batch_size:
                 if __package__:
@@ -368,18 +374,17 @@ def _run_sync_cycle():
                     from daily_backfill import run_daily_backfill
 
                 yesterday = today - timedelta(days=1)
-                # Rebuild every touched date. The daily backfill deliberately
-                # keeps today's Agent-by-game snapshot empty because Agent APIs
-                # calculate the live local date from slot_parent_bet.
+                # 重建每個受影響日期；當日 Agent 遊戲快照刻意留空，由 API 即時計算。
+                # Rebuild every touched date; today's Agent-game snapshot stays empty because APIs compute it live.
                 refresh_dates = set(pending_aggregate_dates)
                 if last_catchup_refresh_date != today:
-                    # Finalize cohorts whose D1/D3/D7 observation day closed,
-                    # once per local calendar day.
+                    # 每個本地日只補一次剛結束觀察窗的 D1/D3/D7 cohort。
+                    # Finalize newly closed D1/D3/D7 cohorts once per local calendar day.
                     refresh_dates.update(
                         yesterday - timedelta(days=offset) for offset in (0, 1, 3, 7)
                     )
-                # Newer dates must be built first because older cohort rows read
-                # them when calculating D1/D3/D7 retention.
+                # 新日期必須先建，舊 cohort 計算留存時會讀取它們。
+                # Newer dates must be built first because older cohorts read them for retention.
                 for refresh_date in sorted(refresh_dates, reverse=True):
                     result = run_daily_backfill(refresh_date, force_refresh=True)
                     _log(f"daily aggregate refresh: {result}")
@@ -411,7 +416,7 @@ def _run_sync_cycle():
 
 
 def start_slot_parent_bet_sync(on_data_updated=None):
-    """Start one periodic daemon synchronizer per Python process."""
+    """每個 Python 程序只啟動一個背景同步執行緒。 / Start one daemon synchronizer per process."""
     global _data_updated_callback, _sync_thread
     with _start_lock:
         if on_data_updated is not None:

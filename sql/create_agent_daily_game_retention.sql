@@ -1,3 +1,6 @@
+-- 建立 Agent × 遊戲 × 日期留存快照及查詢索引。 / Create the Agent-by-game daily retention snapshot and indexes.
+-- 可重複執行；LIKE 會沿用 game_retention 的指標欄位。 / Idempotent; LIKE inherits metric columns from game_retention.
+
 CREATE TABLE IF NOT EXISTS public.agent_daily_game_retention (
     parent_agent_id INT8 NOT NULL,
     agent_id INT8 NOT NULL,

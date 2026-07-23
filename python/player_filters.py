@@ -1,4 +1,4 @@
-"""Pure validation and parsing helpers for player-analysis requests."""
+"""玩家分析請求的純解析與驗證工具。 / Pure parsing and validation for player analysis."""
 
 import calendar
 from datetime import datetime, timedelta
@@ -10,6 +10,7 @@ DATE_FORMAT = "%Y-%m-%d"
 
 
 class PlayerFilters(TypedDict):
+    """標準化後的玩家篩選條件。 / Normalized player-filter fields."""
     new_player: bool
     old_player: bool
     win_player: bool
@@ -19,6 +20,7 @@ class PlayerFilters(TypedDict):
 
 
 def _non_negative_integer(value, default):
+    """解析非負整數，無效時回退預設值。 / Parse a non-negative integer or use the default."""
     try:
         parsed = int(value)
     except (TypeError, ValueError):
@@ -27,7 +29,7 @@ def _non_negative_integer(value, default):
 
 
 def parse_player_filters(args: Mapping[str, str]) -> PlayerFilters:
-    """Normalize player filter parameters without depending on Flask globals."""
+    """不依賴 Flask 全域狀態地正規化玩家篩選。 / Normalize filters without Flask globals."""
     min_spins = _non_negative_integer(args.get("min_spins", 0), 0)
     max_spins = _non_negative_integer(
         args.get("max_spins", DEFAULT_MAX_SPINS), DEFAULT_MAX_SPINS
@@ -45,7 +47,7 @@ def parse_player_filters(args: Mapping[str, str]) -> PlayerFilters:
 
 
 def parse_optional_slot_id(value):
-    """Return a numeric slot ID, or ``None`` when all games are selected."""
+    """解析遊戲 ID；選擇全部遊戲時回傳 ``None``。 / Parse a slot ID, or ``None`` for all games."""
     if value is None or str(value).strip() == "" or str(value).upper() == "ALL":
         return None
     try:
@@ -58,7 +60,7 @@ def parse_optional_slot_id(value):
 
 
 def add_one_calendar_month(date_value):
-    """Return the same day next month, clamped to that month's last day."""
+    """取得下個月同日，超出月底時取月底。 / Return the same day next month, clamped to month-end."""
     month = date_value.month + 1
     year = date_value.year
     if month > 12:
@@ -70,7 +72,7 @@ def add_one_calendar_month(date_value):
 
 
 def add_one_calendar_year(date_value):
-    """Return the same day next year, clamping leap day to February 28."""
+    """取得明年同日，閏日改為 2 月 28 日。 / Return the same day next year, clamping leap day."""
     try:
         return date_value.replace(year=date_value.year + 1)
     except ValueError:
@@ -78,7 +80,7 @@ def add_one_calendar_year(date_value):
 
 
 def validate_date_range(start_date, end_date, enforce_max_year=True):
-    """Return a user-facing validation error, or ``None`` for a valid range."""
+    """驗證日期順序與一年上限；有效時回傳 ``None``。 / Validate ordering and the one-year limit."""
     try:
         start = datetime.strptime(start_date, DATE_FORMAT).date()
         end = datetime.strptime(end_date, DATE_FORMAT).date()
@@ -93,7 +95,7 @@ def validate_date_range(start_date, end_date, enforce_max_year=True):
 
 
 def get_date_range_values(start_date, end_date):
-    """Parse an inclusive date range and return its exclusive upper bound."""
+    """解析含首尾日期的範圍並產生不含上界。 / Parse an inclusive range and its exclusive upper bound."""
     start = datetime.strptime(start_date, DATE_FORMAT).date()
     end = datetime.strptime(end_date, DATE_FORMAT).date()
     return start, end, end + timedelta(days=1)

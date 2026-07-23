@@ -1,3 +1,6 @@
+-- 全量重建玩家生命週期統計。 / Fully rebuild lifetime player statistics.
+-- 先彙總來源再 upsert，避免同一玩家多次更新。 / Aggregate first, then upsert each player once.
+
 WITH source_aggregated AS (
     SELECT 
         s.player_id,

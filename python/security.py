@@ -1,4 +1,4 @@
-"""Password-only session authentication for the analytics dashboard."""
+"""分析儀表板的密碼式 Session 驗證。 / Password-only session authentication for the dashboard."""
 
 import hmac
 import os
@@ -13,6 +13,7 @@ else:
 
 
 def configure_authentication(app):
+    """設定安全 Cookie、登入節流與驗證 API。 / Configure secure cookies, throttling, and authentication routes."""
     app.secret_key = os.environ.get('DASHBOARD_SESSION_SECRET') or os.urandom(32)
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
@@ -27,16 +28,19 @@ def configure_authentication(app):
 
     @app.before_request
     def require_dashboard_login():
+        """除登入 API 外，拒絕未驗證的 API 請求。 / Reject unauthenticated API requests except login endpoints."""
         if request.path.startswith('/api/') and not request.path.startswith('/api/auth/'):
             if not session.get('dashboard_authenticated'):
                 return jsonify({"error": "Authentication required"}), 401
 
     @app.get('/api/auth/status')
     def auth_status():
+        """回報目前 Session 是否已登入。 / Report whether the current session is authenticated."""
         return jsonify({"authenticated": bool(session.get('dashboard_authenticated'))})
 
     @app.post('/api/auth/login')
     def auth_login():
+        """固定時間比對密碼並限制連續失敗嘗試。 / Compare passwords in constant time and throttle failures."""
         supplied_password = str((request.get_json(silent=True) or {}).get('password', ''))
         client_key = request.remote_addr or 'unknown'
         now = datetime.utcnow()
@@ -67,6 +71,7 @@ def configure_authentication(app):
 
     @app.post('/api/auth/logout')
     def auth_logout():
+        """清除 Session 並留下登出稽核紀錄。 / Clear the session and audit the logout."""
         write_server_action(
             AUTHENTICATION,
             f"Logout ip={client_ip()}",

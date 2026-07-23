@@ -1,3 +1,5 @@
+"""離線玩家投注分析與 HTML 圖表輸出工具。 / Offline wager analysis and HTML chart generator."""
+
 import os
 import argparse
 import pandas as pd
@@ -5,26 +7,26 @@ import numpy as np
 import plotly.graph_objects as go
 
 def generate_mock_data():
-    """產生老虎機旋轉紀錄的合成模擬數據，用於本地開發測試。"""
+    """產生本機開發用的合成 Spin 紀錄。 / Generate synthetic spin records for local development."""
     print("正在產生模擬數據...")
     np.random.seed(42)
     
     records = []
     player_id = 888001
     
-    # 第 1 天：2026-06-25
+    # 第 1 天：建立主要投注序列。 / Day 1: build the primary wager sequence.
     base_time = pd.Timestamp("2026-06-25 10:00:00")
     current_slot = 7001
     
     for seq in range(32):
-        # 每隔大約 35 秒進行一次旋轉
+        # 每隔約 35 秒建立一次 Spin。 / Generate one spin about every 35 seconds.
         bet_at_utc7 = base_time + pd.Timedelta(seconds=seq * 35 + np.random.randint(-10, 10))
         if seq == 15:
             current_slot = 7002  # 在第 15 次旋轉時模擬切換遊戲
         has_free_game = 22 <= seq <= 26  # 模擬觸發免費遊戲區間
         bet_amount = 5000.0
         
-        # 免費遊戲不扣投注額，但有較高機會獲得大獎
+        # 免費遊戲不扣投注額，並提高派彩樣本。 / Free games cost no wager and use a higher payout sample.
         if has_free_game:
             bet_amount = 0.0
             total_prize = np.random.choice([0.0, 10000.0, 100000.0], p=[0.4, 0.4, 0.2])
@@ -44,7 +46,7 @@ def generate_mock_data():
     return pd.DataFrame(records)
 
 def load_data_from_db(player_id=None, date_filter=None):
-    """自本地 PostgreSQL 資料庫讀取投注流水紀錄，並在 SQL 層進行高效過濾。"""
+    """從 PostgreSQL 讀取投注流水並於 SQL 層篩選。 / Load wagers from PostgreSQL with SQL-side filtering."""
     print("正在建立 PostgreSQL 資料庫連線 (localhost:5432)...")
     try:
         import psycopg2
@@ -52,7 +54,7 @@ def load_data_from_db(player_id=None, date_filter=None):
         print("錯誤：未安裝 'psycopg2' 套件。請執行：pip install psycopg2-binary")
         exit(1)
         
-    # 預設連線配置
+    # 無設定檔時使用本機預設連線。 / Use local connection defaults when config is unavailable.
     config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config.json'))
     config = {
         "host": "localhost",
@@ -62,7 +64,7 @@ def load_data_from_db(player_id=None, date_filter=None):
         "password": "postgres"
     }
     
-    # 讀取共用配置檔案 config.json
+    # 讀取 Web 服務共用的 config.json。 / Read config.json shared with the Web service.
     if os.path.exists(config_path):
         try:
             import json
@@ -85,7 +87,7 @@ def load_data_from_db(player_id=None, date_filter=None):
         password=config["password"]
     )
     
-    # 基礎查詢 SQL，納入 bet_type 欄位
+    # 基礎查詢包含行為分析需要的 bet_type。 / Base query includes bet_type for behavior analysis.
     query = """
     SELECT 
         player_id, 
@@ -102,7 +104,7 @@ def load_data_from_db(player_id=None, date_filter=None):
     conditions = []
     params = []
     
-    # SQL 條件動態過濾，以防加載整張千萬級別的資料表
+    # 將條件下推 SQL，避免載入整張大型資料表。 / Push filters into SQL to avoid loading the full fact table.
     if player_id:
         conditions.append("player_id = %s")
         params.append(player_id)
@@ -123,48 +125,48 @@ def load_data_from_db(player_id=None, date_filter=None):
     return df
 
 def analyze_player_data(df):
-    """使用 Pandas 對玩家投注明細進行行為特徵與財務指標分析（即時排序與統計）。"""
+    """以 Pandas 計算行為與財務指標。 / Use Pandas to derive behavioral and financial metrics."""
     df = df.copy()
     
-    # 確保數值欄位為 float 類型，避免 Decimal 等類型引起 cumsum() 計算報錯
+    # 轉為 float，避免 Decimal 與 cumsum 不相容。 / Convert to float so Decimal values do not break cumsum.
     for col in ['bet_amount', 'total_prize']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0).astype(float)
             
-    # 處理時間戳記與日期分區
+    # 建立排序時間戳與每日分區鍵。 / Build sortable timestamps and daily partition keys.
     df['bet_at_utc7'] = pd.to_datetime(df['bet_at_utc7'])
     if not df.empty:
         df['play_date'] = df['bet_at_utc7'].dt.date
     else:
         df['play_date'] = pd.Series(dtype='object')
     
-    # 按玩家、日期及時間升序排序，確保視窗函數邏輯正確
+    # 先排序以確保序號、LAG 與累加語意正確。 / Sort first so sequence, LAG, and running sums are correct.
     df = df.sort_values(by=['player_id', 'play_date', 'bet_at_utc7']).reset_index(drop=True)
     
-    # 1. 投注序號 (針對個別玩家與日期分區編號，從 1 開始)
+    # 1. 每位玩家每日從 1 起算投注序號。 / 1. Number wagers from 1 per player and day.
     df['play_seq'] = df.groupby(['player_id', 'play_date']).cumcount() + 1
     
-    # 2. 遊戲切換檢測 (LAG() 同步：比對當前與前一次老虎機 ID 是否不同)
+    # 2. 比較前後 slot_id 偵測遊戲切換。 / 2. Detect game switches by comparing adjacent slot_id values.
     df['prev_slot_id'] = df.groupby(['player_id', 'play_date'])['slot_id'].shift(1)
     df['is_game_changed'] = (df['slot_id'] != df['prev_slot_id']) & df['prev_slot_id'].notna()
     
-    # 3. 計算單次旋轉淨利 (派彩額 - 投注額)
+    # 3. 單次淨利＝派彩－投注。 / 3. Per-spin net profit equals payout minus wager.
     df['net_profit'] = df['total_prize'] - df['bet_amount']
     
-    # 4. 計算每日累計利潤曲線 (Running Sum)
+    # 4. 依玩家與日期計算累積損益。 / 4. Compute running profit per player and day.
     df['daily_cum_profit'] = df.groupby(['player_id', 'play_date'])['net_profit'].cumsum()
     
     return df
 
 def generate_interactive_chart(df, player_id=888001, date_filter=None, output_path="player_profit_curve.html"):
-    """使用 Plotly 建立精緻的互動式折線圖 HTML 報表。"""
-    # 過濾特定玩家
+    """以 Plotly 輸出互動式累積損益 HTML。 / Export an interactive cumulative-profit HTML chart with Plotly."""
+    # 套用指定玩家條件。 / Apply the requested player filter.
     p_df = df[df['player_id'].astype(str) == str(player_id)].copy()
     if p_df.empty:
         print(f"查無玩家 ID {player_id} 的數據")
         return
         
-    # 過濾特定日期，否則預設套用第一個可用日期
+    # 套用指定日期，缺省時使用首個可用日期。 / Use the requested date or the first available date.
     if date_filter:
         p_df = p_df[p_df['play_date'].astype(str) == str(date_filter)]
         if p_df.empty:
@@ -179,14 +181,15 @@ def generate_interactive_chart(df, player_id=888001, date_filter=None, output_pa
             
     p_df = p_df.sort_values(by='play_seq')
     
-    # 格式化數值以利 Tooltips 顯示（防範科學記號）
+    # 預先格式化提示數值，避免科學記號。 / Preformat tooltip values to avoid scientific notation.
     p_df['daily_cum_profit_fmt'] = p_df['daily_cum_profit'].apply(lambda x: f"{int(x):,} IDR")
     p_df['net_profit_fmt'] = p_df['net_profit'].apply(lambda x: f"{int(x):,} IDR")
     p_df['bet_amount_fmt'] = p_df['bet_amount'].apply(lambda x: f"{int(x):,} IDR")
     p_df['total_prize_fmt'] = p_df['total_prize'].apply(lambda x: f"{int(x):,} IDR")
     
-    # 映射投注類型編碼為易讀字串
+    # 將投注代碼映射為可讀名稱。 / Map wager codes to readable labels.
     def map_bet_type(b_type):
+        """將數字投注類型轉為報表顯示文字。 / Map numeric wager types to report labels."""
         if pd.isna(b_type) or b_type is None:
             return "--"
         try:
@@ -204,10 +207,10 @@ def generate_interactive_chart(df, player_id=888001, date_filter=None, output_pa
             
     p_df['bet_type_name'] = p_df['bet_type'].apply(map_bet_type) if 'bet_type' in p_df.columns else "--"
     
-    # 初始化圖表
+    # 初始化可疊加多個事件 Trace 的圖表。 / Initialize a figure that can layer multiple event traces.
     fig = go.Figure()
     
-    # 繪製主折線圖 (每日累計利潤)
+    # 繪製每日累積損益主線。 / Draw the main daily cumulative-profit line.
     fig.add_trace(go.Scatter(
         x=p_df['play_seq'],
         y=p_df['daily_cum_profit'],
@@ -235,7 +238,7 @@ def generate_interactive_chart(df, player_id=888001, date_filter=None, output_pa
         )
     ))
     
-    # 標記免費遊戲旋轉紀錄 (has_free_game = True)
+    # 疊加免費遊戲事件標記。 / Overlay free-game event markers.
     fg_df = p_df[p_df['has_free_game'] == True]
     if not fg_df.empty:
         fig.add_trace(go.Scatter(
@@ -257,7 +260,7 @@ def generate_interactive_chart(df, player_id=888001, date_filter=None, output_pa
             )
         ))
         
-    # 標記遊戲切換點 (is_game_changed = True)
+    # 疊加遊戲切換事件標記。 / Overlay game-switch event markers.
     gc_df = p_df[p_df['is_game_changed'] == True]
     if not gc_df.empty:
         fig.add_trace(go.Scatter(
@@ -281,7 +284,7 @@ def generate_interactive_chart(df, player_id=888001, date_filter=None, output_pa
             text=gc_df['slot_id']
         ))
 
-    # 套用高級暗色調主題樣式
+    # 套用離線報表的深色主題。 / Apply the dark theme used by offline reports.
     fig.update_layout(
         title=dict(
             text=f"Player {player_id} Financial Curve - Date: {date_filter}",
@@ -321,7 +324,7 @@ def generate_interactive_chart(df, player_id=888001, date_filter=None, output_pa
         hovermode="x unified"
     )
     
-    # 輸出儲存為 HTML
+    # 輸出自包含互動 HTML。 / Write the interactive HTML output.
     fig.write_html(output_path)
     print(f"互動式圖表已成功輸出至：{output_path}")
 
@@ -335,7 +338,7 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # 判斷數據加載管道
+    # 依 CLI 參數選擇 CSV、資料庫或模擬資料。 / Select CSV, database, or mock input from CLI arguments.
     if args.db:
         df = load_data_from_db(player_id=args.player, date_filter=args.date)
     elif args.csv:
@@ -346,8 +349,8 @@ if __name__ == "__main__":
     else:
         df = generate_mock_data()
         
-    # 執行主運算分析
+    # 執行共用衍生欄位計算。 / Run the shared feature-derivation step.
     analyzed_df = analyze_player_data(df)
     
-    # 繪製並匯出 HTML 圖表
+    # 繪製並匯出最終 HTML。 / Render and export the final HTML report.
     generate_interactive_chart(analyzed_df, player_id=args.player, date_filter=args.date, output_path=args.out)

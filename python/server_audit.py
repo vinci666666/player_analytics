@@ -1,4 +1,4 @@
-"""Persistent UTC+7 server activity logging."""
+"""持久化 UTC+7 伺服器活動紀錄。 / Persistent UTC+7 server activity logging."""
 
 import sys
 import time
@@ -34,7 +34,7 @@ CREATE INDEX IF NOT EXISTS idx_server_action_log_type_time
 
 
 def client_ip():
-    """Return the originating IP reported by the proxy or direct connection."""
+    """取得代理轉送或直接連線的來源 IP。 / Return the originating proxy or direct-client IP."""
     forwarded_for = request.headers.get("X-Forwarded-For", "")
     if forwarded_for:
         return forwarded_for.split(",", 1)[0].strip()
@@ -42,7 +42,7 @@ def client_ip():
 
 
 def initialize_server_action_log():
-    """Create the log table and indexes; safe to call on every startup."""
+    """建立紀錄表與索引，可在每次啟動安全重跑。 / Create the log table and indexes idempotently."""
     connection = None
     try:
         connection = get_db_connection()
@@ -61,7 +61,7 @@ def initialize_server_action_log():
 
 
 def write_server_action(message_type_id, message_content):
-    """Write one event in a separate transaction so application rollbacks keep it."""
+    """以獨立交易寫入事件，避免應用交易回滾時遺失。 / Write in a separate transaction so app rollbacks preserve it."""
     connection = None
     try:
         connection = get_db_connection()
@@ -83,7 +83,7 @@ def write_server_action(message_type_id, message_content):
     except Exception as error:
         if connection is not None:
             connection.rollback()
-        # A database outage cannot be written to that same database.
+        # 資料庫中斷無法再寫回同一資料庫，只能輸出 stderr。 / A DB outage cannot be logged to that same DB, so use stderr.
         print(f"Unable to persist server action: {error}", file=sys.stderr)
         return False
     finally:
@@ -92,15 +92,17 @@ def write_server_action(message_type_id, message_content):
 
 
 def configure_server_action_logging(app):
-    """Register request, response and uncaught-exception audit hooks."""
+    """註冊請求、回應與未捕捉例外的稽核掛鉤。 / Register request, response, and uncaught-exception hooks."""
     initialize_server_action_log()
 
     @app.before_request
     def remember_request_start():
+        """保存高精度開始時間供延遲計算。 / Save a high-resolution request start time."""
         g.server_action_started_at = time.monotonic()
 
     @app.after_request
     def log_response(response):
+        """記錄回應狀態、路徑、IP 與耗時。 / Log response status, path, IP, and latency."""
         started_at = getattr(g, "server_action_started_at", None)
         duration_ms = (
             round((time.monotonic() - started_at) * 1000, 1)
@@ -121,6 +123,7 @@ def configure_server_action_logging(app):
         return response
 
     def log_unhandled_exception(sender, exception, **extra):
+        """將未捕捉例外寫入持久化稽核。 / Persist uncaught exceptions in the audit log."""
         write_server_action(
             ERROR,
             f"Unhandled exception during {request.method} {request.path} "

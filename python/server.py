@@ -1,3 +1,11 @@
+"""營運分析 Flask API 與靜態網站入口。 / Flask API and static-site entry point for operations analytics.
+
+此模組協調驗證、快取、查詢、名稱對照與背景工作；大型 SQL CTE 由各 API 共用，
+避免即時資料與歷史彙總採用不同計算口徑。
+This module coordinates authentication, caching, queries, name lookups, and background jobs.
+Shared CTEs keep live and historical metrics on the same calculation basis.
+"""
+
 import os
 import sys
 from datetime import datetime, timedelta
@@ -54,7 +62,7 @@ else:
     from server_audit import INFO, configure_server_action_logging, write_server_action
     from slot_parent_bet_sync import start_slot_parent_bet_sync
 
-# 初始化 Flask 應用，設定靜態檔案目錄為專案的 web 資料夾
+# 初始化 Flask，靜態根目錄指向 web。 / Initialize Flask with web as the static root.
 app = Flask(__name__, static_folder=os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'web')))
 configure_server_action_logging(app)
 configure_authentication(app)
@@ -63,7 +71,7 @@ dates_cache = TtlCache(ttl_seconds=300)
 
 
 def get_home_dashboard_cache_ttl():
-    """Keep the overview cache aligned with the configured DB sync cadence."""
+    """讓總覽快取週期與資料同步頻率一致。 / Align overview-cache TTL with the DB sync cadence."""
     try:
         sync_config = load_config().get("slotParentBetSync", {})
         return max(60, int(sync_config.get("interval_seconds", 60)))
@@ -72,8 +80,8 @@ def get_home_dashboard_cache_ttl():
 
 
 home_dashboard_cache = TtlCache(ttl_seconds=get_home_dashboard_cache_ttl())
-# Player filters are commonly submitted repeatedly while navigating back to the
-# analysis page. Keep this cache short because today's betting rows are live.
+# 玩家返回分析頁時常重送相同篩選；快取要短，因當日投注仍持續變動。
+# Player filters repeat during navigation; keep this cache short because today's wagers remain live.
 players_cache = TtlCache(ttl_seconds=30, max_entries=256)
 player_games_cache = TtlCache(ttl_seconds=60, max_entries=128)
 
@@ -340,24 +348,24 @@ AGENT_DAILY_METRICS_CTE = """
 """
 
 # ----------------------------------------------------
-# 靜態網頁檔案託管路由
+# 靜態網站路由。 / Static-site routes.
 # ----------------------------------------------------
 @app.route('/')
 def index():
-    """託管首頁 index.html。"""
+    """提供首頁 index.html。 / Serve the dashboard entry document."""
     return send_from_directory(app.static_folder, 'index.html')
 
 @app.route('/<path:path>')
 def serve_static(path):
-    """託管 CSS、JS、圖片等靜態資源檔案。"""
+    """提供 CSS、JS、圖片等靜態資源。 / Serve CSS, JavaScript, images, and other static assets."""
     return send_from_directory(app.static_folder, path)
 
 # ----------------------------------------------------
-# API 連線端點
+# 分析 API 端點。 / Analytics API endpoints.
 # ----------------------------------------------------
 @app.route('/api/dates', methods=['GET'])
 def get_dates():
-    """獲取資料表中有投注紀錄的所有不重複日期清單（遞減排序），使用遞迴 CTE 鬆散索引掃描優化。"""
+    """以遞迴 CTE 鬆散索引掃描取得可用日期。 / Return available dates via a recursive loose-index scan."""
     cached_dates = dates_cache.get("available_dates")
     if cached_dates is not None:
         return jsonify(cached_dates)
@@ -379,7 +387,7 @@ def get_dates():
         """
         cursor.execute(query)
         rows = cursor.fetchall()
-        # 格式化日期為 YYYY-MM-DD 字串陣列
+        # 轉為 HTML 日期控制項使用的 YYYY-MM-DD。 / Format dates as YYYY-MM-DD for HTML controls.
         dates = [row[0].strftime('%Y-%m-%d') for row in rows]
         dates_cache.set("available_dates", dates)
         return jsonify(dates)
@@ -392,7 +400,7 @@ def get_dates():
 
 @app.route('/api/monthly', methods=['GET'])
 def get_monthly_data():
-    """Return daily casino metrics used by the monthly dashboard charts."""
+    """回傳月度圖表使用的每日全站指標。 / Return daily casino metrics for monthly charts."""
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
 
@@ -460,7 +468,7 @@ def get_monthly_data():
 
 @app.route('/api/game', methods=['GET'])
 def get_game_data():
-    """Return daily game metrics grouped by date and slot_id."""
+    """回傳依日期與 slot_id 分組的遊戲指標。 / Return game metrics grouped by date and slot_id."""
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     slot_id = request.args.get('slot_id')
@@ -530,7 +538,7 @@ def get_game_data():
 
 @app.route('/api/game-spin-medians', methods=['GET'])
 def get_game_spin_medians():
-    """Return daily medians of per-player spin counts for one selected game."""
+    """回傳指定遊戲每日玩家 Spin 中位數。 / Return daily per-player spin medians for one game."""
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     slot_id = request.args.get('slot_id')
@@ -583,7 +591,7 @@ def get_game_spin_medians():
 
 @app.route('/api/game-hourly-players', methods=['GET'])
 def get_game_hourly_players():
-    """Return 24 hourly player counts, averaged by day for multi-day ranges."""
+    """回傳 24 小時玩家數；多日時取每日平均。 / Return 24 hourly counts, averaged across multi-day ranges."""
     date_value = request.args.get('date')
     start_value = request.args.get('start_date') or date_value
     end_value = request.args.get('end_date') or date_value
@@ -660,7 +668,7 @@ def get_game_hourly_players():
 
 @app.route('/api/game-ranking', methods=['GET'])
 def get_game_ranking():
-    """Return game totals for the selected monthly-analysis period."""
+    """回傳月度分析區間的遊戲彙總排行。 / Return game totals for the selected monthly period."""
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     if not start_date or not end_date:
@@ -713,7 +721,7 @@ def get_game_ranking():
 
 @app.route('/api/agent-options', methods=['GET'])
 def get_agent_options():
-    """Return parent-agent and agent pairs used by the agent analysis filters."""
+    """回傳 Agent 篩選所需的 Parent Agent／Agent 組合。 / Return parent-agent pairs for filter controls."""
     conn = None
     try:
         conn = get_db_connection()
@@ -755,7 +763,7 @@ def get_agent_options():
 
 @app.route('/api/agent-dates', methods=['GET'])
 def get_agent_dates():
-    """Return the dates available in the local Agent retention snapshot."""
+    """回傳本機 Agent 留存快照的可用日期。 / Return dates available in the local Agent-retention snapshot."""
     conn = None
     try:
         conn = get_db_connection()
@@ -786,7 +794,7 @@ def get_agent_dates():
 
 @app.route('/api/agent-analysis', methods=['GET'])
 def get_agent_analysis():
-    """Return Agent totals and daily details from the local Agent snapshot."""
+    """從本機快照回傳 Agent 彙總與每日明細。 / Return Agent totals and daily details from the local snapshot."""
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     parent_agent_id = request.args.get('parent_agent_id', 'ALL')
@@ -988,6 +996,7 @@ def get_agent_analysis():
             [item for row in cube + details for item in (row["parent_agent_id"], row["agent_id"])],
         )
         def serialize(row):
+            """統一序列化 Agent 分析列。 / Normalize one Agent-analysis row for JSON."""
             return {
                 **row,
                 "date": row["date"].isoformat() if row.get("date") else None,
@@ -1012,7 +1021,7 @@ def get_agent_analysis():
 
 @app.route('/api/agent-game-performance', methods=['GET'])
 def get_agent_game_performance():
-    """Return game-performance data scoped to one parent agent and sub agent."""
+    """回傳指定 Parent Agent、Agent 與遊戲的績效。 / Return game performance scoped to one parent and sub-agent."""
     try:
         start_day = datetime.strptime(request.args.get('start_date', ''), "%Y-%m-%d").date()
         end_day = datetime.strptime(request.args.get('end_date', ''), "%Y-%m-%d").date()
@@ -1164,7 +1173,7 @@ def get_agent_game_performance():
 
 @app.route('/api/home-dashboard', methods=['GET'])
 def get_home_dashboard():
-    """Return the latest operations overview used by the home dashboard."""
+    """回傳首頁所需的最新營運總覽。 / Return the latest operations overview for the home dashboard."""
     cached_dashboard = home_dashboard_cache.get("overview")
     if cached_dashboard is not None:
         return jsonify(cached_dashboard)
@@ -1186,8 +1195,8 @@ def get_home_dashboard():
         if not latest_date:
             return jsonify({"error": "No operating data is available"}), 404
 
-        # Dashboard "current day" means the latest available data partition,
-        # which may lag behind the application server's calendar date.
+        # 「當日」指最新資料分區，不一定等於應用伺服器日曆日。
+        # Dashboard "current day" means the latest data partition, which may lag behind server time.
         reference_date = latest_date
         current_month_start = reference_date.replace(day=1)
         previous_month_end = current_month_start - timedelta(days=1)
@@ -1291,6 +1300,7 @@ def get_home_dashboard():
         hourly_spins_24h = cursor.fetchall()
 
         def load_game_rankings(start_day, end_day, limit):
+            """載入指定期間的遊戲排行。 / Load game rankings for one date range."""
             cursor.execute("""
                 WITH combined AS (
                     SELECT slot_id, total_spin_count, total_bet_amount, total_win_amount
@@ -1328,6 +1338,7 @@ def get_home_dashboard():
             } for row in ranking_rows]
 
         def load_player_alerts(start_day, end_day, limit):
+            """找出玩家獲利最高的風險警示名單。 / Find the highest player-profit risk alerts."""
             cursor.execute("""
                 SELECT player_id, COUNT(*)::INT8 AS spin_count,
                        COALESCE(SUM(bet_amount), 0) AS total_bet,
@@ -1364,6 +1375,7 @@ def get_home_dashboard():
         games_today = load_game_rankings(reference_date, reference_date, 5)
 
         def load_agent_performance(start_day, end_day):
+            """載入期間內 Agent 績效排行。 / Load Agent performance rankings for a period."""
             cursor.execute("""
                 WITH combined AS (
                     SELECT parent_agent_id, agent_id,
@@ -1416,6 +1428,7 @@ def get_home_dashboard():
         players_today = load_player_alerts(reference_date, reference_date, 5)
 
         def normalize_player_rows(rows):
+            """加入可顯示玩家名稱並格式化 ID。 / Add display names and normalize player IDs."""
             return [{
                 **row,
                 "total_spin_count": row.get("spin_count", 0),
@@ -1459,7 +1472,7 @@ def get_home_dashboard():
             release_db_connection(conn)
 
 def refresh_home_dashboard_cache(inserted_count=0, affected_dates=frozenset()):
-    """Rebuild the cached overview after startup or a successful DB sync."""
+    """啟動或同步成功後重建總覽快取。 / Rebuild the overview cache after startup or successful sync."""
     home_dashboard_cache.set_ttl_seconds(get_home_dashboard_cache_ttl())
     previous_payload = home_dashboard_cache.get("overview")
     home_dashboard_cache.clear()
@@ -1492,17 +1505,16 @@ def build_filtered_players_subquery(
     slot_id_filter=None,
     use_summary=False,
 ):
-    """Build the reusable filtered-player subquery and params."""
+    """建立可重用的玩家篩選子查詢與參數。 / Build the reusable filtered-player subquery and parameters."""
     start_day, end_day, end_exclusive = get_date_range_values(start_date, end_date)
 
-    # 僅在有指定新/舊玩家篩選條件時才進行與 player_stats 表的 LEFT JOIN
+    # 只在需要新／舊玩家條件時連接 player_stats。 / Join player_stats only for new/old-player filters.
     use_stats_join = (filters["new_player"] and not filters["old_player"]) or (filters["old_player"] and not filters["new_player"])
 
     if use_summary:
         today = datetime.now(LOCAL_TIME_ZONE).date()
-        # Historical dates come from the compact daily aggregate. Only the
-        # current local day reads raw spins, so live data stays current without
-        # forcing historical searches through slot_parent_bet.
+        # 歷史日期讀精簡日彙總，僅本地當日讀原始 Spin，兼顧即時性與查詢成本。
+        # Historical dates use daily aggregates; only the local current day reads raw spins.
         sources = []
         params = []
         if start_day < today:
@@ -1592,7 +1604,7 @@ def build_filtered_players_subquery(
         query += " AND p.slot_id = %s"
         params.append(slot_id_filter)
 
-    # 新玩家：首次 spin 日期落在篩選日期範圍內；舊玩家：首次 spin 日期早於篩選開始日。
+    # 新玩家首次 Spin 落在範圍內；舊玩家早於起日。 / New players start in-range; old players started earlier.
     if filters["new_player"] and not filters["old_player"]:
         query += " AND s.first_spin_date >= %s AND s.first_spin_date <= %s"
         params.extend([start_day, end_day])
@@ -1619,7 +1631,7 @@ def build_filtered_players_subquery(
 
 @app.route('/api/player-games', methods=['GET'])
 def get_player_games():
-    """Return the game-name lookup without scanning the raw betting table."""
+    """不掃描原始投注表地回傳完整遊戲名稱。 / Return all game names without scanning raw wagers."""
     cache_key = ("all",)
     cached_games = player_games_cache.get(cache_key)
     if cached_games is not None:
@@ -1648,7 +1660,7 @@ def get_player_games():
 
 @app.route('/api/players', methods=['GET'])
 def get_players():
-    """獲取在特定日期或時間區間投注的玩家 ID 清單，支援多維度篩選（新/老玩家、贏/輸錢玩家、最大旋轉數）。"""
+    """依日期、遊戲、玩家屬性與 Spin 範圍查詢玩家。 / Find players by date, game, attributes, and spin range."""
     start_date = request.args.get('start_date') or request.args.get('date')
     end_date = request.args.get('end_date') or request.args.get('date')
     filters = parse_player_filters(request.args)
@@ -1696,7 +1708,7 @@ def get_players():
         query = f"SELECT player_id FROM ({subquery}) filtered_players ORDER BY player_id;"
         cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
-        # 回傳字串化的玩家 ID 陣列
+        # 以字串回傳大整數 ID，避免瀏覽器精度損失。 / Return IDs as strings to avoid browser integer precision loss.
         players = [str(row[0]) for row in rows]
         players_cache.set(cache_key, players)
         return jsonify(players)
@@ -1709,7 +1721,7 @@ def get_players():
 
 @app.route('/api/data', methods=['GET'])
 def get_data():
-    """獲取指定日期區間 and 玩家的完整投注流水明細（包含 bet_type 欄位，照時間排序）。"""
+    """回傳指定玩家與日期區間的時間排序投注流水。 / Return time-ordered wagers for one player and date range."""
     start_date = request.args.get('start_date') or request.args.get('date')
     end_date = request.args.get('end_date') or request.args.get('date')
     player_id = request.args.get('player_id')
@@ -1724,7 +1736,7 @@ def get_data():
     if not start_date or not end_date or (not player_id and not player_name):
         return jsonify({"error": "缺少開始日期、結束日期，或玩家 ID／玩家名稱"}), 400
 
-    # 單獨玩家名稱查詢不限期間；玩家篩選分析維持一年上限。
+    # 名稱查詢需先解析生命週期 ID；一般分析仍限制一年。 / Name lookup resolves a lifetime ID first; normal analysis keeps the one-year limit.
     range_error = validate_date_range(start_date, end_date, enforce_max_year=not bool(player_name))
     if range_error:
         return jsonify({"error": range_error}), 400
@@ -1755,7 +1767,7 @@ def get_data():
             player_name = matches[0]['player_username']
 
         if is_name_lookup:
-            # 名稱已解析成唯一 ID，不必再掃描並聚合整段期間的玩家清單。
+            # 已解析唯一 ID，避免再次彙總期間玩家清單。 / A unique ID is resolved, so no second period-wide player aggregation is needed.
             subquery, subparams = "SELECT %s::BIGINT", [player_id]
         else:
             use_summary = selected_slot is None and is_player_daily_available(cursor)
@@ -1838,7 +1850,7 @@ def get_data():
         rows = cursor.fetchall()
         game_names = get_game_names(cursor, [row["slot_id"] for row in rows])
         
-        # 將 datetime 物件轉換為格式化字串以利 JSON 序列化
+        # 將 datetime 轉為穩定文字以便 JSON 序列化。 / Convert datetimes to stable strings for JSON serialization.
         for row in rows:
             row['game_name'] = game_names.get(str(row['slot_id']), str(row['slot_id']))
             if row['bet_at_utc7']:

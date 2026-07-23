@@ -1,4 +1,4 @@
-"""Daily aggregate-table completeness check and one-day backfill."""
+"""每日彙總表完整性檢查與單日補算。 / Daily aggregate completeness checks and one-day backfills."""
 
 import sys
 import threading
@@ -29,6 +29,7 @@ _backfill_thread = None
 
 
 def _log(message, *, error=False):
+    """同時輸出主控台與持久化稽核紀錄。 / Write to both the console and persistent audit log."""
     timestamp = datetime.now(TIME_ZONE).isoformat(timespec="seconds")
     print(
         f"[{timestamp}] [daily backfill] {message}",
@@ -367,7 +368,7 @@ BACKFILL_SQL = {
 
 
 def run_daily_backfill(target_date=None, *, force_refresh=False):
-    """Atomically fill or rebuild aggregate rows for one local date."""
+    """在單一交易內補建或重建指定日期的彙總。 / Atomically fill or rebuild aggregates for one local date."""
     target_date = target_date or (datetime.now(TIME_ZONE).date() - timedelta(days=1))
     if isinstance(target_date, datetime):
         target_date = target_date.date()
@@ -415,8 +416,8 @@ def run_daily_backfill(target_date=None, *, force_refresh=False):
                 return result
 
             if force_refresh:
-                # Remove dependent snapshots first, then rebuild all four tables
-                # from the same source-data point inside this transaction.
+                # 先刪除相依快照，再於同一交易、同一來源時間點重建四表。
+                # Remove dependent snapshots first, then rebuild all four from one source-data point.
                 for table_name in reversed(TARGET_TABLES):
                     cursor.execute(
                         f"DELETE FROM public.{table_name} WHERE date = %s",
@@ -487,7 +488,7 @@ def run_daily_backfill(target_date=None, *, force_refresh=False):
 
 
 def _find_pending_dates(through_date):
-    """Find source dates that are absent from at least one aggregate table."""
+    """找出至少一張彙總表缺少的來源日期。 / Find source dates missing from one or more aggregate tables."""
     connection = get_db_connection()
     try:
         with connection.cursor() as cursor:
@@ -521,7 +522,7 @@ def _find_pending_dates(through_date):
 
 
 def run_pending_backfills(through_date=None):
-    """Backfill gaps and refresh newly closed retention observation dates."""
+    """補齊缺口並刷新剛成熟的留存觀察日期。 / Backfill gaps and refresh newly matured retention dates."""
     through_date = through_date or (datetime.now(TIME_ZONE).date() - timedelta(days=1))
     if isinstance(through_date, datetime):
         through_date = through_date.date()
@@ -532,8 +533,8 @@ def run_pending_backfills(through_date=None):
         through_date - timedelta(days=offset) for offset in (0, 1, 3, 7)
     }
     target_dates = pending_dates | refresh_dates
-    # Build newer observation dates first so older cohorts can calculate
-    # finalized D1/D3/D7 values from their player_daily rows.
+    # 先建較新觀察日，讓舊 cohort 能取得已成熟的 D1/D3/D7。
+    # Build newer observation dates first so older cohorts can finalize D1/D3/D7.
     return [
         run_daily_backfill(
             target_date,
@@ -544,6 +545,7 @@ def run_pending_backfills(through_date=None):
 
 
 def _seconds_until_next_run(now=None):
+    """計算距離台北時間下一次 02:00 的秒數。 / Compute seconds until the next 02:00 Asia/Taipei run."""
     now = now or datetime.now(TIME_ZONE)
     next_run = datetime.combine(now.date(), RUN_AT, tzinfo=TIME_ZONE)
     if next_run <= now:
@@ -552,6 +554,7 @@ def _seconds_until_next_run(now=None):
 
 
 def _run_scheduler():
+    """永久排程迴圈；每次執行後重新計算下一次等待。 / Permanent scheduler loop that recalculates each wait."""
     while True:
         wait_seconds, next_run = _seconds_until_next_run()
         _log(f"next check: {next_run.isoformat(timespec='seconds')}")
@@ -567,7 +570,7 @@ def _run_scheduler():
 
 
 def start_daily_backfill_scheduler():
-    """Start one 02:00 Asia/Taipei scheduler per Python process."""
+    """每個 Python 程序只啟動一個台北時間 02:00 排程。 / Start one 02:00 scheduler per process."""
     global _backfill_thread
     with _start_lock:
         if _backfill_thread is not None and _backfill_thread.is_alive():

@@ -1,4 +1,4 @@
-/* premium styles for player behavior dashboard */
+/* 營運分析儀表板的共用視覺系統。 / Shared visual system for the operations analytics dashboard. */
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500;600;700&display=swap');
 
 :root {
@@ -49,7 +49,7 @@ body {
     radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.05) 0%, transparent 45%);
 }
 
-/* Scrollbar customization */
+/* 捲軸：維持品牌風格且不干擾內容。 / Scrollbars: branded styling without distracting from content. */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -65,7 +65,7 @@ body {
   background: #94a3b8;
 }
 
-/* Typography & Layout structure */
+/* 字體與全站版面骨架。 / Typography and global layout structure. */
 header {
   border-bottom: 1px solid var(--border-color);
   padding: 1.25rem 2.5rem;
@@ -173,7 +173,7 @@ main {
   .monthly-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-/* Glassmorphic Panels */
+/* 半透明面板、邊框與陰影層級。 / Translucent panels, borders, and elevation. */
 .panel {
   background: var(--panel-bg);
   border: 1px solid var(--border-color);
@@ -200,7 +200,7 @@ main {
   padding-left: 0.5rem;
 }
 
-/* Control Panel (Sidebar) styling */
+/* 玩家篩選側欄與表單控制項。 / Player-filter sidebar and form controls. */
 .control-sidebar {
   display: flex;
   flex-direction: column;
@@ -407,7 +407,7 @@ select.form-control {
   box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
-/* Custom file upload styling */
+/* 自訂檔案上傳控制項。 / Custom file-upload controls. */
 .file-upload-wrapper {
   position: relative;
   overflow: hidden;
@@ -473,7 +473,7 @@ select.form-control {
   transform: translateY(0);
 }
 
-/* Dashboard Analytics Layout (Right Side) */
+/* 右側玩家分析與跨頁共用容器。 / Right-side player analytics and shared page containers. */
 .analytics-content {
   display: flex;
   flex-direction: column;
@@ -661,7 +661,7 @@ main.home-page { grid-template-columns: 210px 1fr; }
   .single-player-controls { grid-template-columns: 1fr; }
 }
 
-/* Metric Cards Grid */
+/* 響應式指標卡網格與數值溢位保護。 / Responsive metric cards and value-overflow protection. */
 .metrics-section {
   display: flex;
   flex-direction: column;
@@ -730,7 +730,7 @@ main.home-page { grid-template-columns: 210px 1fr; }
   text-shadow: 0 0 10px var(--danger-glow);
 }
 
-/* Chart Container styling */
+/* Plotly 圖表容器尺寸與間距。 / Plotly chart container sizing and spacing. */
 .chart-container {
   height: 480px;
   position: relative;
@@ -745,7 +745,7 @@ main.home-page { grid-template-columns: 210px 1fr; }
   height: 100%;
 }
 
-/* Tab Container (SQL, Python, Table) */
+/* 分頁內容容器（SQL／Python／表格）。 / Tabbed content for SQL, Python, and table views. */
 .tabs-container {
   margin-top: 1rem;
 }
@@ -789,7 +789,7 @@ main.home-page { grid-template-columns: 210px 1fr; }
   display: block;
 }
 
-/* Code Snippet styling */
+/* 程式碼區塊與複製操作。 / Code blocks and copy actions. */
 .code-wrapper {
   position: relative;
 }
@@ -827,7 +827,7 @@ code {
   color: #312e81;
 }
 
-/* Analysis Data Table */
+/* 分析表格、黏性表頭與橫向捲動。 / Analysis tables, sticky headers, and horizontal scrolling. */
 .table-wrapper {
   max-height: 400px;
   overflow-y: auto;
@@ -872,7 +872,7 @@ table.data-table tr:hover {
   background-color: rgba(99, 102, 241, 0.03);
 }
 
-/* Badges styling */
+/* 投注、切換與免費遊戲狀態徽章。 / Wager, switch, and free-game badges. */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -895,7 +895,7 @@ table.data-table tr:hover {
   border: 1px solid rgba(245, 158, 11, 0.4);
 }
 
-/* Legend items in dashboard header or chart section */
+/* 儀表板與圖表的自訂圖例。 / Custom legends for dashboard and chart sections. */
 .legend-pills {
   display: flex;
   gap: 1rem;
@@ -943,8 +943,8 @@ table.data-table tr:hover {
   box-shadow: 0 0 10px var(--primary-glow);
 }
 
-/* Responsive layout: keep the desktop dashboard intact while making every
-   analysis view usable on touch-sized screens. */
+/* 響應式版面：保留桌面資訊密度並支援觸控螢幕。
+   Responsive layout: preserve desktop density while supporting touch-sized screens. */
 @media (max-width: 1024px) {
   header {
     padding: 1rem 1.25rem;

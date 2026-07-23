@@ -1,7 +1,8 @@
 \set ON_ERROR_STOP on
 
--- Keep one index per active query pattern. Run outside a transaction because
--- CONCURRENTLY minimizes blocking for the live API and synchronizer.
+-- 每種有效查詢模式只保留一個索引，避免重複寫入成本。
+-- Keep one index per active query pattern to avoid duplicate write overhead.
+-- 因使用 CONCURRENTLY，必須在交易外執行。 / Run outside a transaction because CONCURRENTLY is used.
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ux_slot_parent_bet_bet_at_id
 ON public.slot_parent_bet (bet_at, id);
 

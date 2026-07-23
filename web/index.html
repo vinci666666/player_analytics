@@ -1,15 +1,21 @@
 <!DOCTYPE html>
+<!--
+  iGaming 營運分析單頁介面。 / Single-page interface for iGaming operations analytics.
+  所有可切換文字均提供穩定 id，讓 app.js 能在不重新載入頁面的情況下更新中英文。
+  Translatable elements expose stable ids so app.js can switch languages without a page reload.
+-->
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>iGaming Operations Analytics Platform</title>
   <link rel="stylesheet" href="style.css">
-  <!-- Load Plotly.js for premium interactive chart rendering -->
+  <!-- 由 CDN 載入 Plotly 互動圖表引擎。 / Load the Plotly interactive chart engine from its CDN. -->
   <script defer src="https://cdn.plot.ly/plotly-2.24.1.min.js" charset="utf-8"></script>
 </head>
 <body class="auth-locked">
 
+  <!-- 驗證鎖定層：登入成功前隱藏分析資料。 / Authentication gate that hides analytics until login succeeds. -->
   <section id="login-screen" class="login-screen" aria-labelledby="login-title">
     <div class="login-card">
       <div class="login-brand-mark" aria-hidden="true">◆</div>
@@ -25,6 +31,7 @@
     </div>
   </section>
 
+  <!-- 全站品牌、語系與登出操作。 / Global branding, locale, and logout actions. -->
   <header>
     <h1 id="nav-title">iGaming Analytics <span id="nav-subtitle">// Player Behavior Analyzer</span> <span class="badge-version">v1.0</span></h1>
     <div class="header-right">
@@ -34,6 +41,7 @@
   </header>
 
   <main>
+    <!-- 主要分析頁導覽；按鈕狀態由 app.js 統一管理。 / Primary analysis navigation managed by app.js. -->
     <aside class="page-navigation" aria-label="頁面導覽">
       <div class="page-navigation-header">
         <span id="page-nav-eyebrow" class="page-navigation-eyebrow">ANALYTICS</span>
@@ -49,7 +57,7 @@
       </nav>
     </aside>
 
-    <!-- Left Column: Controls and Config -->
+    <!-- 玩家行為左欄篩選器。 / Player-behavior filters in the left column. -->
     <div class="control-sidebar">
       <div class="panel player-filter-panel">
         <h2 id="filter-title" class="panel-title">玩家分析篩選條件</h2>
@@ -78,7 +86,7 @@
           </div>
         </div>
 
-        <!-- 日期篩選模式 -->
+        <!-- 單日或區間模式。 / Single-date or range mode. -->
         <div class="form-group">
           <label id="label-date-mode" for="date-mode-select">Date Filter Mode</label>
           <select id="date-mode-select" class="form-control">
@@ -87,7 +95,7 @@
           </select>
         </div>
 
-        <!-- 單一日期選擇 -->
+        <!-- 單日模式控制項。 / Controls used by single-date mode. -->
         <div class="form-group" id="container-single-date">
           <label id="label-active-date" for="date-select">Active Date (Partition)</label>
           <select id="date-select" class="form-control">
@@ -95,7 +103,7 @@
           </select>
         </div>
 
-        <!-- 時間區間選擇 -->
+        <!-- 最長一年區間控制項。 / Date-range controls with a one-year maximum. -->
         <div class="form-group" id="container-range-date" style="display: none;">
           <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 0.5rem; align-items: end;">
             <div style="min-width: 0;">
@@ -114,7 +122,7 @@
           </div>
         </div>
 
-        <!-- Spin 數範圍篩選 -->
+        <!-- 玩家 Spin 總數上下限。 / Minimum and maximum player spin totals. -->
         <div class="form-group">
           <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 0.5rem; align-items: end;">
             <div style="min-width: 0;">
@@ -156,7 +164,7 @@
 
     </div>
 
-    <!-- Operations Home -->
+    <!-- 營運總覽：快速指標、排行與警示。 / Operations overview with KPIs, rankings, and alerts. -->
     <div id="home-analysis-content" class="home-analysis-content" hidden>
       <div class="home-hero panel">
         <div>
@@ -224,7 +232,7 @@
       <p id="home-status" class="monthly-status" role="status"></p>
     </div>
 
-    <!-- Monthly Analysis -->
+    <!-- 月度營運：單月與跨月比較。 / Monthly operations for single-period and cross-month comparisons. -->
     <div id="monthly-analysis-content" class="monthly-analysis-content" hidden>
       <div class="monthly-toolbar panel">
         <div>
@@ -310,7 +318,7 @@
       <p id="monthly-status" class="monthly-status" role="status"></p>
     </div>
 
-    <!-- Game Analysis -->
+    <!-- 遊戲績效：單遊戲、全部遊戲與雙遊戲比較。 / Game performance for one, all, or two compared games. -->
     <div id="game-analysis-content" class="game-analysis-content" hidden>
       <div class="game-toolbar panel">
         <div>
@@ -419,7 +427,7 @@
       <p id="game-status" class="monthly-status" role="status"></p>
     </div>
 
-    <!-- Agent Analysis -->
+    <!-- Agent 分析：Parent Agent → Agent → 遊戲下鑽。 / Agent analysis drill-down: parent → agent → game. -->
     <div id="agent-analysis-content" class="agent-analysis-content" hidden>
       <div class="game-toolbar panel">
         <div>
@@ -482,7 +490,7 @@
       <p id="agent-status" class="monthly-status" role="status"></p>
     </div>
 
-    <!-- Single Player Analysis -->
+    <!-- 單獨玩家查詢，可接受玩家名稱或 Player ID。 / Single-player lookup by name or Player ID. -->
     <div id="single-player-analysis-content" class="single-player-analysis-content" hidden>
       <div class="single-player-toolbar panel">
         <div class="single-player-heading">
@@ -509,9 +517,9 @@
       </div>
     </div>
 
-    <!-- Right Column: Visual Dashboard -->
+    <!-- 玩家行為右欄儀表板。 / Player-behavior dashboard in the right column. -->
     <div class="analytics-content">
-      <!-- Summary Metrics -->
+      <!-- 玩家與所選期間摘要指標。 / Player and selected-period summary metrics. -->
       <div class="metrics-section">
         <h2 id="metrics-player-title" class="panel-title">玩家生命週期摘要</h2>
         <div class="metrics-grid">
@@ -572,14 +580,14 @@
         </div>
       </div>
 
-      <!-- Chart Panel -->
+      <!-- 累積損益與投注事件圖。 / Cumulative profit and wager-event chart. -->
       <div class="panel" style="padding: 1rem;">
         <div class="chart-container">
           <div id="chart-viewport" class="chart-viewport"></div>
         </div>
       </div>
 
-      <!-- Game Wager Summary -->
+      <!-- 依遊戲與投注類型彙總。 / Wager summary grouped by game and wager type. -->
       <div class="panel">
         <h2 id="game-wager-summary-title" class="panel-title">遊戲投注紀錄</h2>
         <div class="table-wrapper">
@@ -600,7 +608,7 @@
         </div>
       </div>
 
-      <!-- Detail Table Panel -->
+      <!-- 依時間排序的逐筆投注明細。 / Time-ordered individual wager details. -->
       <div class="panel">
         <h2 id="table-panel-title" class="panel-title">📊 投注序列明細</h2>
         <div class="table-wrapper">
@@ -632,6 +640,7 @@
     </div>
   </main>
 
+  <!-- 全域模態載入遮罩：顯示時攔截整頁互動。 / Global modal loading overlay that intercepts all page interaction. -->
   <div id="global-data-loading" class="global-data-loading" role="status" aria-live="polite" hidden>
     <div class="global-data-loading-content">
       <span class="global-data-loading-spinner" aria-hidden="true"></span>

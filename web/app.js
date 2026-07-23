@@ -1,3 +1,12 @@
+/**
+ * iGaming 營運分析儀表板的前端協調層。 / Front-end orchestration for the iGaming operations dashboard.
+ *
+ * 職責包含頁面狀態、REST API、快取資料的重新渲染、中英文切換、Plotly 圖表與鍵盤操作。
+ * Responsibilities include page state, REST calls, cached-data rerendering, i18n, Plotly charts, and keyboard access.
+ * API 資料一律經 Flask 取得；任何寫入 innerHTML 的後端文字都必須先 escapeHtml。
+ * API data always comes through Flask; backend text interpolated into innerHTML must pass through escapeHtml.
+ */
+
 import {
   escapeHtml,
   formatCount,
@@ -18,11 +27,12 @@ import {
 } from './js/date-utils.js';
 import { installAutoFitText } from './js/text-fit.js';
 
-// iGaming 玩家投注行為分析儀表板前端邏輯 - 連接本地 PostgreSQL 後端
+// iGaming 玩家投注行為分析前端，透過 Flask 間接存取 PostgreSQL。 / Player analytics UI; PostgreSQL is accessed indirectly through Flask.
 
-// 全域狀態變數
+// 全域狀態與資料快取：保存使用者選擇及最近 API 結果，供切換語系時原地重繪。 / Global state and API caches used for in-place rerendering after locale changes.
 let analyzedData = [];      // 用於快取目前所選玩家在指定日期的所有旋轉紀錄
 let currentLang = 'zh';     // 語系設定：預設為繁體中文 ('zh')，支援切換為英文 ('en')
+/** 將 UI 語系映射為 Intl 使用的 locale。 / Map the UI language to an Intl locale. */
 const activeLocale = () => currentLang === 'zh' ? 'zh-TW' : 'en-US';
 let currentPlayersRequestController = null;
 let currentDataRequestController = null;
@@ -69,6 +79,7 @@ const MAX_CHART_POINTS = 4000;
 
 installAutoFitText('.metric-value', { minSize: 10 });
 
+/** 讀取可恢復的頁面與篩選狀態。 / Read persisted page and filter state. */
 function readUiState() {
   try {
     return JSON.parse(localStorage.getItem(UI_STATE_KEY) || 'null');
@@ -78,6 +89,7 @@ function readUiState() {
   }
 }
 
+/** 保存目前語系、頁面與各分析條件。 / Persist locale, active page, and analysis filters. */
 function saveUiState() {
   try {
     const activePage = document.querySelector('.page-nav-item.active')?.dataset.page || 'player';
@@ -124,7 +136,7 @@ function saveUiState() {
   }
 }
 
-// DOM 元素參考
+// DOM 元素參考集中宣告，避免各渲染函式重複查詢。 / Centralized DOM references avoid repeated queries in render functions.
 const dateModeSelect = document.getElementById('date-mode-select');
 const containerSingleDate = document.getElementById('container-single-date');
 const containerRangeDate = document.getElementById('container-range-date');
@@ -228,7 +240,7 @@ pageNavItems.forEach((item) => {
   });
 });
 
-// 指標數據顯示元素參考
+// 玩家指標卡的值欄位。 / Value elements used by player metric cards.
 const metricStatsSpins = document.getElementById('metric-stats-spins');
 const metricStatsTotalWager = document.getElementById('metric-stats-total-wager');
 const metricStatsTotalPayout = document.getElementById('metric-stats-total-payout');
@@ -242,12 +254,12 @@ const metricNetProfit = document.getElementById('metric-net-profit');
 const metricGameSwitches = document.getElementById('metric-game-switches');
 const metricFreeGames = document.getElementById('metric-free-games');
 
-// 數據明細表格本體
+// 投注序列表格本體。 / Betting-sequence table body.
 const tableBody = document.getElementById('table-body');
 const gameWagerSummaryBody = document.getElementById('game-wager-summary-body');
 
 // ----------------------------------------------------
-// 本地語系化字典 (i18n)
+// 本地語系字典：兩種語系的鍵與 {placeholder} 必須完全一致。 / Local i18n dictionary; locale keys and placeholders must match exactly.
 // ----------------------------------------------------
 const translations = {
   en: {
@@ -321,7 +333,7 @@ const translations = {
     badgeFree: "⭐ Free",
     btnCopySql: "Copy SQL",
     btnCopyPython: "Copy Python",
-    // 圖表專用欄位
+    // 圖表專用文字。 / Chart-specific copy.
     chartTitle: "Player {player} Cumulative Profit Curve - {date}",
     chartXAxis: "Play Sequence Number (play_seq)",
     chartYAxis: "Cumulative Profit (IDR)",
@@ -624,7 +636,7 @@ const translations = {
     badgeFree: "⭐ 免費",
     btnCopySql: "複製 SQL",
     btnCopyPython: "複製 Python",
-    // 圖表專用欄位
+    // 圖表專用文字。 / Chart-specific copy.
     chartTitle: "玩家 {player} 累計利潤曲線 - {date}",
     chartXAxis: "投注序列號 (play_seq)",
     chartYAxis: "累計利潤 (IDR)",
@@ -860,7 +872,9 @@ const translations = {
 
 const localizedStatusStates = new WeakMap();
 
+/** 以目前語系重新產生一個已保存狀態訊息。 / Rebuild one saved status message in the active locale. */
 function refreshLocalizedStatus(element) {
+  // 狀態只保存翻譯鍵與替代參數，因此切換語言時不需重新查詢 API。 / Store keys and parameters so status copy can change without another API call.
   const state = localizedStatusStates.get(element);
   if (!state) return;
   let message = translations[currentLang][state.key] || '';
@@ -870,6 +884,7 @@ function refreshLocalizedStatus(element) {
   element.textContent = message;
 }
 
+/** 保存翻譯鍵與參數，並立即顯示狀態。 / Save a translation key and parameters, then render immediately. */
 function setLocalizedStatus(element, key, replacements = {}) {
   if (!key) {
     localizedStatusStates.delete(element);
@@ -880,8 +895,9 @@ function setLocalizedStatus(element, key, replacements = {}) {
   refreshLocalizedStatus(element);
 }
 
+/** 更新整頁語系，並從快取重繪所有動態內容。 / Update the page locale and rerender all cached dynamic content. */
 function updateLanguageUI() {
-  // 依據當前語系設定更新網頁上的所有文字欄位
+  // 更新靜態標籤，並以快取資料重繪動態表格與圖表。 / Update static copy and rerender dynamic tables/charts from cached data.
   const lang = translations[currentLang];
   const locale = activeLocale();
   document.documentElement.lang = currentLang === 'zh' ? 'zh-Hant' : 'en';
@@ -895,7 +911,7 @@ function updateLanguageUI() {
   if (!loginSubmit.disabled) loginSubmit.textContent = lang.loginSubmit;
   btnLogout.textContent = lang.logout;
   
-  // 頁首 Header 區塊
+  // 頁首品牌與全域操作。 / Header branding and global actions.
   document.getElementById('nav-title').childNodes[0].textContent = lang.title + ' ';
   document.getElementById('nav-subtitle').textContent = lang.subtitle;
   btnLangToggle.textContent = lang.languageToggle;
@@ -1074,7 +1090,7 @@ function updateLanguageUI() {
       : lang.gameOption.replace('{name}', formatGameNameOnly(option.value, option.dataset.gameName));
   });
   
-  // 篩選器面板區塊
+  // 玩家篩選面板。 / Player-filter panel.
   document.getElementById('filter-title').textContent = lang.filterTitle;
   document.getElementById('label-active-player').textContent = lang.labelActivePlayer;
   document.getElementById('label-player-game').textContent = lang.labelPlayerGame;
@@ -1086,7 +1102,7 @@ function updateLanguageUI() {
   document.getElementById('label-win-player').textContent = lang.labelWinPlayer;
   document.getElementById('label-lose-player').textContent = lang.labelLosePlayer;
   
-  // 新篩選器元素
+  // 玩家屬性與遊戲篩選。 / Player-attribute and game filters.
   document.getElementById('label-date-mode').textContent = lang.labelDateMode;
   document.getElementById('opt-date-mode-single').textContent = lang.optDateModeSingle;
   document.getElementById('opt-date-mode-range').textContent = lang.optDateModeRange;
@@ -1096,7 +1112,7 @@ function updateLanguageUI() {
   document.getElementById('label-max-spins').textContent = lang.labelMaxSpins;
   document.getElementById('label-apply-filters').textContent = lang.labelApplyFilters;
   
-  // 下拉選單預設選項
+  // 重新語系化動態下拉選項。 / Relocalize dynamic dropdown options.
   const optPlaceholderDate = document.getElementById('opt-placeholder-date');
   if (optPlaceholderDate) {
     optPlaceholderDate.textContent = lang.placeholderDate;
@@ -1118,7 +1134,7 @@ function updateLanguageUI() {
       : lang.gameOption.replace('{name}', option.dataset.gameName || option.textContent);
   });
   
-  // 指標看板
+  // 玩家與期間指標卡。 / Player and period metric cards.
   document.getElementById('metrics-player-title').textContent = lang.metricsPlayerTitle;
   document.getElementById('metrics-range-title').textContent = lang.metricsRangeTitle;
   document.getElementById('label-stat-total-spins').textContent = lang.statTotalSpins;
@@ -1134,13 +1150,13 @@ function updateLanguageUI() {
   document.getElementById('label-stat-switches').textContent = lang.statSwitches;
   document.getElementById('label-stat-free').textContent = lang.statFree;
   
-  // 數據明細面板標題
+  // 明細面板標題。 / Detail-panel titles.
   document.getElementById('table-panel-title').textContent = lang.tabTable;
   document.getElementById('game-wager-summary-title').textContent = lang.gameWagerSummaryTitle;
   document.getElementById('game-wager-th-game').textContent = lang.gameWagerGame;
   document.getElementById('game-wager-th-type').textContent = lang.gameWagerType;
   
-  // 數據表表頭
+  // 投注序列表頭。 / Betting-sequence headers.
   document.getElementById('th-seq').textContent = lang.thSeq;
   document.getElementById('th-time').textContent = lang.thTime;
   document.getElementById('th-slot').textContent = lang.thSlot;
@@ -1152,7 +1168,7 @@ function updateLanguageUI() {
   document.getElementById('th-net').textContent = lang.thNet;
   document.getElementById('th-cum').textContent = lang.thCum;
   
-  // 數據表空資料列提示
+  // 空資料提示。 / Empty-data copy.
   const tdEmpty = document.getElementById('td-empty');
   if (tdEmpty) {
     tdEmpty.textContent = lang.tdEmpty;
@@ -1179,16 +1195,16 @@ function updateLanguageUI() {
 }
 
 // ----------------------------------------------------
-// 使用者操作事件監聽 (Events Listeners)
+// 使用者操作事件監聽。 / User interaction event listeners.
 // ----------------------------------------------------
 
-// 點擊繁中/EN語系切換
+// 切換繁中／英文並保存 UI 狀態。 / Toggle Chinese/English and persist the UI state.
 btnLangToggle.addEventListener('click', () => {
   currentLang = currentLang === 'zh' ? 'en' : 'zh';
   updateLanguageUI();
   saveUiState();
   
-  // 若已載入過資料，同步重新語系化下拉選單內「玩家 ID: X」的顯示字串
+  // 已載入玩家需同步更新選項文字。 / Relocalize already-loaded player option labels.
   const mode = dateModeSelect.value;
   let startDate, endDate;
   if (mode === 'single') {
@@ -1206,7 +1222,7 @@ btnLangToggle.addEventListener('click', () => {
   }
 });
 
-// 當前日期篩選模式變更
+// 日期篩選模式變更時只調整可見控制項。 / Date-mode changes only adjust visible controls.
 dateModeSelect.addEventListener('change', () => {
   const mode = dateModeSelect.value;
   if (mode === 'single') {
@@ -1219,7 +1235,7 @@ dateModeSelect.addEventListener('change', () => {
   markFiltersPending();
 });
 
-// 各個日期下拉選單改變，只標記待篩選；按下篩選按鈕才重新加載玩家 ID 清單
+// 日期改變時標記條件尚未套用；按下篩選才查詢玩家。 / Date changes mark filters pending; players load only after Apply.
 dateSelect.addEventListener('change', () => {
   markFiltersPending();
 });
@@ -1234,7 +1250,7 @@ playerGameSelect.addEventListener('change', () => {
   markFiltersPending();
 });
 
-// Spin 數範圍輸入框改變，只標記待篩選；按下篩選按鈕才重新加載玩家 ID 清單
+// Spin 範圍改變時先正規化，並等待使用者套用。 / Normalize spin-range changes and wait for explicit Apply.
 minSpinsInput.addEventListener('change', () => {
   normalizeSpinRangeInputs();
   markFiltersPending();
@@ -1250,7 +1266,7 @@ btnApplyFilters.addEventListener('click', () => {
   triggerLoadPlayers();
 });
 
-// 玩家 ID 下拉選單改變，重新載入該玩家的投注區間明細
+// 玩家改變後載入目前範圍內的投注明細。 / Load wager details for the selected player and active range.
 playerSelect.addEventListener('change', () => {
   const mode = dateModeSelect.value;
   let startDate, endDate;
@@ -1270,7 +1286,7 @@ playerSelect.addEventListener('change', () => {
   }
 });
 
-// 篩選框互斥邏輯：新老互斥、贏輸互斥；狀態改變時等待使用者按篩選
+// 新／老與贏／輸條件互斥，變更後等待套用。 / New/old and win/loss filters are mutually exclusive and require Apply.
 checkboxNewPlayer.addEventListener('change', () => {
   if (checkboxNewPlayer.checked) checkboxOldPlayer.checked = false;
   markFiltersPending();
@@ -1292,9 +1308,10 @@ checkboxLosePlayer.addEventListener('change', () => {
 });
 
 // ----------------------------------------------------
-// 後端 REST API 請求與串接
+// 後端 REST API：請求控制器會取消過時查詢，避免較舊回應覆蓋新選擇。 / REST integration; abort controllers prevent stale responses from overwriting newer selections.
 // ----------------------------------------------------
 
+/** 載入不受日期限制的完整遊戲選單。 / Load the complete game list independently of dates. */
 async function loadPlayerGames() {
   if (currentPlayerGamesRequestController) currentPlayerGamesRequestController.abort();
   currentPlayerGamesRequestController = new AbortController();
@@ -1346,8 +1363,9 @@ async function loadPlayerGames() {
   }
 }
 
+/** 載入資料庫可用日期並套用已保存範圍。 / Load available dates and restore the saved range. */
 function loadAvailableDates() {
-  // 自 API /api/dates 獲取可選的分區日期清單，並預設加載首個日期
+  // 由 /api/dates 取得可選日期並推導預設值。 / Read available dates from /api/dates and derive defaults.
   fetch('/api/dates')
     .then(res => {
       if (!res.ok) {
@@ -1374,26 +1392,26 @@ function loadAvailableDates() {
       monthlyLatestAvailableDate = dates[0];
 
       dates.forEach(d => {
-        // 單一日期
+        // 單日選項。 / Single-date options.
         const opt = document.createElement('option');
         opt.value = d;
         opt.textContent = d;
         dateSelect.appendChild(opt);
         
-        // 開始日期
+        // 區間起日選項。 / Range-start options.
         const optStart = document.createElement('option');
         optStart.value = d;
         optStart.textContent = d;
         dateStartSelect.appendChild(optStart);
         
-        // 結束日期
+        // 區間迄日選項。 / Range-end options.
         const optEnd = document.createElement('option');
         optEnd.value = d;
         optEnd.textContent = d;
         dateEndSelect.appendChild(optEnd);
       });
       
-      // 設定預設值：單一日期與結束日期為最新日期，開始日期為最新日期往前一個月內的最早可選日期
+      // 預設迄日為最新資料日，起日取約一個月前的可用日期。 / Default the end to latest data and start near one month earlier.
       dateSelect.value = dates[0];
       dateEndSelect.value = dates[0];
       dateStartSelect.value = getDefaultRangeStartDate(dates, dates[0]);
@@ -1419,6 +1437,7 @@ function loadAvailableDates() {
     });
 }
 
+/** 依目前控制項組合出玩家查詢範圍。 / Build a player query from the active controls. */
 function triggerLoadPlayers() {
   const mode = dateModeSelect.value;
   let startDate, endDate;
@@ -1435,7 +1454,7 @@ function triggerLoadPlayers() {
     return;
   }
   
-  // 日期區間合法性驗證 (開始日期不得大於結束日期)
+  // 驗證日期順序。 / Validate date ordering.
   if (startDate > endDate) {
     playerSelect.innerHTML = `<option value="">⚠️ ${translations[currentLang].dateOrderError}</option>`;
     resetDashboardState();
@@ -1453,10 +1472,12 @@ function triggerLoadPlayers() {
 
 let activePlayersList = []; // 用於快取目前加載的玩家 ID 陣列
 
+/** 僅在已選玩家時啟用單獨玩家分析。 / Enable single-player analysis only after player selection. */
 function updatePlayerAnalysisButtonState() {
   btnOpenSinglePlayer.disabled = !playerSelect.value;
 }
 
+/** 標記控制項內容尚未送往後端。 / Mark control changes as not yet applied. */
 function markFiltersPending() {
   activePlayersList = [];
   playerSelect.innerHTML = `<option value="" id="opt-placeholder-player">${translations[currentLang].placeholderApplyFilters}</option>`;
@@ -1464,6 +1485,7 @@ function markFiltersPending() {
   resetDashboardState();
 }
 
+/** 同步篩選按鈕的禁用與載入文案。 / Synchronize the filter button's disabled and loading states. */
 function setFilterLoading(isLoading) {
   btnApplyFilters.disabled = isLoading;
   btnApplyFilters.style.opacity = isLoading ? '0.7' : '';
@@ -1473,8 +1495,9 @@ function setFilterLoading(isLoading) {
     : translations[currentLang].labelApplyFilters;
 }
 
+/** 驗證一年範圍後查詢符合條件的玩家。 / Validate the one-year range, then query matching players. */
 function loadPlayersForDate(startDate, endDate) {
-  // 依據當前選定的日期與 4 個篩選方塊狀態，獲取過濾後的玩家清單
+  // 將日期、遊戲、玩家屬性與 Spin 範圍送往後端。 / Send date, game, player attributes, and spin range to the backend.
   const newPlayer = checkboxNewPlayer.checked;
   const oldPlayer = checkboxOldPlayer.checked;
   const winPlayer = checkboxWinPlayer.checked;
@@ -1546,8 +1569,9 @@ function loadPlayersForDate(startDate, endDate) {
     });
 }
 
+/** 重新建立玩家選單並選回指定 Player ID。 / Rebuild the player dropdown and optionally restore a Player ID. */
 function repopulatePlayerDropdown(startDate, endDate, selectPlayerId = null) {
-  // 重新將 activePlayersList 快取的資料填入玩家下拉選單中
+  // 從 activePlayersList 快取重建選單。 / Rebuild options from the activePlayersList cache.
   if (activePlayersList.length === 0) {
     const opt = document.createElement('option');
     opt.value = "";
@@ -1573,7 +1597,7 @@ function repopulatePlayerDropdown(startDate, endDate, selectPlayerId = null) {
   });
   playerSelect.replaceChildren(options);
   
-  // 保留或預設選擇指定玩家 ID
+  // 優先選回呼叫端指定的 Player ID。 / Prefer the Player ID requested by the caller.
   if (selectPlayerId && activePlayersList.includes(String(selectPlayerId))) {
     playerSelect.value = String(selectPlayerId);
   } else {
@@ -1582,6 +1606,7 @@ function repopulatePlayerDropdown(startDate, endDate, selectPlayerId = null) {
   updatePlayerAnalysisButtonState();
 }
 
+/** 載入玩家投注明細，AbortController 會淘汰舊請求。 / Load wagers while aborting stale requests. */
 function loadAnalyzedData(startDate, endDate, player_id) {
   if (currentDataRequestController) {
     currentDataRequestController.abort();
@@ -1620,7 +1645,7 @@ function loadAnalyzedData(startDate, endDate, player_id) {
   queryParams.set('slot_id', playerGameSelect.value || 'ALL');
   tableBody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--text-secondary); font-weight: bold;">${translations[currentLang].placeholderLoadingPlayers}</td></tr>`;
   
-  // 自 API /api/data 獲取指定日期和玩家的投注紀錄，並送入前端進行即時計算
+  // 從 /api/data 取得明細後交給共用分析管線。 / Fetch details from /api/data and pass them to the shared analysis pipeline.
   fetch(`/api/data?${queryParams.toString()}`, { signal: requestController.signal })
     .then(res => {
       if (!res.ok) {
@@ -1648,6 +1673,7 @@ function loadAnalyzedData(startDate, endDate, player_id) {
     });
 }
 
+/** 以 Player ID 或名稱查詢單一玩家並重用共用儀表板。 / Query one player by ID or name and reuse the shared dashboard. */
 async function loadSinglePlayerData(playerId = '') {
   const lang = translations[currentLang];
   const playerName = singlePlayerName.value.trim();
@@ -1717,11 +1743,12 @@ singlePlayerForm.addEventListener('submit', event => {
 });
 
 // ----------------------------------------------------
-// 前端即時分析、運算與渲染
+// 前端分析與渲染：原始投注先轉為衍生欄位，再供指標、表格與圖表共用。 / Client analysis and rendering; wagers are enriched once, then shared by metrics, tables, and charts.
 // ----------------------------------------------------
 
+/** 將 API 紀錄轉為時間序列衍生欄位後渲染。 / Enrich API records with sequence fields, then render. */
 function processAndRender(records) {
-  // 對後端回傳的原始流水資料進行順序標記、切換檢測及累計利潤的即時運算
+  // 在瀏覽器計算序號、切換事件與累積損益。 / Compute sequence, switch events, and cumulative profit in the browser.
   if (records.length === 0) {
     resetDashboardState();
     return;
@@ -1729,7 +1756,7 @@ function processAndRender(records) {
   
   const playerStates = new Map();
   
-  // 將資料庫回傳的投注資訊映射為完整的分析特徵陣列
+  // 映射後端欄位並保留原始辨識資訊。 / Map backend fields while retaining source identifiers.
   analyzedData = records.map(record => {
     const playerId = String(record.player_id);
     const state = playerStates.get(playerId) || {
@@ -1739,7 +1766,7 @@ function processAndRender(records) {
     };
     state.playSeq++;
     
-    // 判斷是否發生切換老虎機遊戲 (比對上一次與本次的 slot_id)
+    // 比對相鄰 slot_id 判斷遊戲切換。 / Compare adjacent slot_id values to detect game switches.
     const slotId = Number(record.slot_id);
     let is_game_changed = false;
     if (state.prevSlotId !== null && state.prevSlotId !== slotId) {
@@ -1747,7 +1774,7 @@ function processAndRender(records) {
     }
     state.prevSlotId = slotId;
     
-    // 計算該筆投注的淨利潤
+    // 淨利＝派彩－投注。 / Net profit equals payout minus wager.
     const bet = Number(record.bet_amount || 0);
     const prize = Number(record.total_prize || 0);
     const net_profit = prize - bet;
@@ -1778,8 +1805,9 @@ function processAndRender(records) {
   renderDashboard();
 }
 
+/** 根據 analyzedData 更新玩家指標、表格與圖表。 / Update player metrics, tables, and charts from analyzedData. */
 function renderDashboard() {
-  // 將計算後的分析數據更新至前端看板指標與結果表格，並呼叫 Plotly 繪圖
+  // 同一份衍生資料供指標、表格及 Plotly 使用。 / Reuse one enriched dataset for metrics, tables, and Plotly.
   if (analyzedData.length === 0) return;
   
   const singleMode = document.querySelector('main').classList.contains('single-player-page') && singlePlayerContext;
@@ -1791,7 +1819,7 @@ function renderDashboard() {
   
   const lang = translations[currentLang];
   
-  // 計算匯總看板指標
+  // 計算期間總計與事件數。 / Compute period totals and event counts.
   let totalSpins = analyzedData.length;
   let totalWager = 0;
   let totalPayout = 0;
@@ -1820,7 +1848,7 @@ function renderDashboard() {
   metricStatsFirstSpin.textContent = statsRow.stats_first_spin_date || "--";
   metricStatsLastUpdate.textContent = formatDateTimeText(statsRow.stats_last_spin_at);
 
-  // 渲染範圍內指標 counters，採用千分位金流格式化
+  // 依語系格式化指標卡數字與金額。 / Format metric-card counts and money for the active locale.
   metricTotalSpins.textContent = totalSpins;
   metricTotalWager.textContent = formatCurrency(totalWager);
   metricTotalPayout.textContent = formatCurrency(totalPayout);
@@ -1832,24 +1860,24 @@ function renderDashboard() {
   metricFreeGames.textContent = freeGames;
   renderGameWagerSummary(analyzedData, lang);
   
-  // 清空數據表格並逐列渲染填入明細 (限制最高 5,000 筆以防 DOM 凍結)
+  // 最多渲染 5,000 列，避免大量 DOM 節點凍結畫面。 / Render at most 5,000 rows to prevent DOM freezes.
   tableBody.innerHTML = '';
   const MAX_TABLE_ROWS = 5000;
   const rowsToRender = analyzedData.slice(0, MAX_TABLE_ROWS);
   const htmlRuns = [];
   
   rowsToRender.forEach(row => {
-    // 是否切換遊戲事件狀態標籤
+    // 建立遊戲切換徽章。 / Build the game-switch badge.
     const isSwitchedCell = row.is_game_changed 
       ? `<span class="badge badge-game-changed">${lang.badgeChanged}</span>` 
       : `<span style="color:var(--text-secondary);">--</span>`;
       
-    // 是否為免費遊戲狀態標籤
+    // 建立免費遊戲徽章。 / Build the free-game badge.
     const isFreeCell = row.has_free_game 
       ? `<span class="badge badge-free-game">${lang.badgeFree}</span>` 
       : `<span style="color:var(--text-secondary);">--</span>`;
       
-    // 淨利數值與正負顏色 class 決定
+    // 依正負損益選擇色彩 class。 / Select a color class from the profit sign.
     const spinNet = row.net_profit;
     const netClass = spinNet > 0 ? 'color: var(--success);' : (spinNet < 0 ? 'color: var(--danger);' : '');
     const timestampStr = formatDateTimeForTooltip(row.bet_at_utc7);
@@ -1874,7 +1902,7 @@ function renderDashboard() {
     `);
   });
   
-  // 若筆數超出限制，於底部顯示提示
+  // 截斷時顯示總筆數提示。 / Show the full count when rows are truncated.
   if (analyzedData.length > MAX_TABLE_ROWS) {
     htmlRuns.push(`
       <tr>
@@ -1887,7 +1915,7 @@ function renderDashboard() {
   
   tableBody.innerHTML = htmlRuns.join('');
   
-  // 將圖表工作排到下一個畫面更新，先讓表格與查詢狀態完成繪製。
+  // 延後圖表到下一幀，讓表格與狀態先顯示。 / Defer charts one frame so table and status paint first.
   if (chartRenderFrame !== null) cancelAnimationFrame(chartRenderFrame);
   chartRenderFrame = requestAnimationFrame(() => {
     chartRenderFrame = null;
@@ -1895,6 +1923,7 @@ function renderDashboard() {
   });
 }
 
+/** 依遊戲與投注類型彙總單一玩家押注。 / Aggregate one player's wagers by game and wager type. */
 function renderGameWagerSummary(rows, lang) {
   const groups = new Map();
   rows.forEach(row => {
@@ -1922,6 +1951,7 @@ function renderGameWagerSummary(rows, lang) {
   `).join('');
 }
 
+/** 在保留首尾與轉折點的前提下降採樣大型序列。 / Downsample large series while preserving endpoints and turns. */
 function getOptimizedChartData(rows) {
   if (rows.length <= MAX_CHART_POINTS) return rows;
   const selected = new Map();
@@ -1930,7 +1960,7 @@ function getOptimizedChartData(rows) {
   for (let index = stride; index < rows.length - 1; index += stride) {
     selected.set(index, rows[index]);
   }
-  // 保留重要事件點，避免抽樣後遺失免費遊戲或遊戲切換標記。
+  // 強制保留免費遊戲與切換點。 / Always retain free-game and switch-event points.
   rows.forEach((row, index) => {
     if (row.has_free_game || row.is_game_changed) selected.set(index, row);
   });
@@ -1938,8 +1968,9 @@ function getOptimizedChartData(rows) {
   return [...selected.entries()].sort((a, b) => a[0] - b[0]).map(entry => entry[1]);
 }
 
+/** 建立玩家累積損益與投注事件互動圖。 / Build the interactive cumulative-profit and wager-event chart. */
 function renderPlotlyChart(chartData, player, date) {
-  // 使用 Plotly.js 對分析後的數據點進行渲染，包含 Tooltips 進階顯示
+  // 使用 Plotly 渲染線段、事件與提示。 / Render line segments, events, and tooltips with Plotly.
   const lang = translations[currentLang];
   const isSinglePlayerChart = document.querySelector('main').classList.contains('single-player-page');
   const hoverTemplate = 
@@ -1953,7 +1984,7 @@ function renderPlotlyChart(chartData, player, date) {
     `<b>${lang.tooltipBet}:</b> %{customdata[1]} | <b>${lang.tooltipPrize}:</b> %{customdata[2]}<br>` +
     "<extra></extra>";
 
-  // 1. 依 bet_type 將累計利潤曲線分段上色
+  // 1. 依 bet_type 分段上色。 / 1. Color cumulative-profit segments by wager type.
   const betTypeSegments = new Map();
   chartData.forEach((row, idx) => {
     const betTypeKey = getBetTypeKey(row.bet_type);
@@ -1999,7 +2030,7 @@ function renderPlotlyChart(chartData, player, date) {
     type: 'scattergl'
   }));
 
-  // 2. 設置免費遊戲標記點 Trace (has_free_game = True)
+  // 2. 免費遊戲事件 Trace。 / 2. Free-game event trace.
   const fgDataset = chartData.filter(r => r.has_free_game);
   const freeGameTrace = {
     x: fgDataset.map(r => r.play_seq),
@@ -2023,7 +2054,7 @@ function renderPlotlyChart(chartData, player, date) {
     type: 'scattergl'
   };
 
-  // 3. 設置切換遊戲標記點 Trace (is_game_changed = True)
+  // 3. 遊戲切換事件 Trace。 / 3. Game-switch event trace.
   const gsDataset = chartData.filter(r => r.is_game_changed);
   const gameSwitchTrace = {
     x: gsDataset.map(r => r.play_seq),
@@ -2049,7 +2080,7 @@ function renderPlotlyChart(chartData, player, date) {
     type: 'scattergl'
   };
 
-  // 圖表版面與樣式細部設定（對齊淺色玻璃擬態面板風格）
+  // 圖表版面對齊淺色面板視覺。 / Match the chart layout to the light panel design.
   const layout = {
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(248, 250, 252, 0.72)',
@@ -2122,8 +2153,9 @@ function renderPlotlyChart(chartData, player, date) {
   Plotly.react('chart-viewport', dataTraces, layout, config);
 }
 
+/** 清除玩家分析資料、指標、圖表與空狀態。 / Clear player data, metrics, charts, and empty state. */
 function resetDashboardState() {
-  // 重置清空目前指標數據看板、表格與圖表至初始狀態
+  // 回到尚未載入資料的初始狀態。 / Return metrics, table, and chart to the unloaded state.
   analyzedData = [];
   gameWagerSummaryBody.innerHTML = `<tr><td colspan="5" class="table-empty-message">--</td></tr>`;
   if (chartRenderFrame !== null) {
@@ -2160,11 +2192,13 @@ function resetDashboardState() {
   }
 }
 
+/** 將 Spin 下限解析為非負整數。 / Parse the minimum spin count as a non-negative integer. */
 function getMinSpinsValue() {
   const parsedValue = parseInt(minSpinsInput.value, 10);
   return Number.isInteger(parsedValue) && parsedValue >= 0 ? parsedValue : 0;
 }
 
+/** 將 Spin 上限解析為不小於下限的整數。 / Parse the maximum spin count, never below the minimum. */
 function getMaxSpinsValue() {
   const minSpins = getMinSpinsValue();
   const parsedValue = parseInt(maxSpinsInput.value, 10);
@@ -2172,20 +2206,24 @@ function getMaxSpinsValue() {
   return Math.max(maxSpins, minSpins);
 }
 
+/** 保證 Spin 上限不小於下限。 / Ensure the maximum spin count is not below the minimum. */
 function normalizeSpinRangeInputs() {
   minSpinsInput.value = getMinSpinsValue();
   maxSpinsInput.value = getMaxSpinsValue();
 }
 
+/** 依損益正負回傳 CSS class。 / Return the CSS class for a profit sign. */
 function getProfitClass(value) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '';
   return Number(value) >= 0 ? 'profit-positive' : 'profit-negative';
 }
 
+/** 將後端投注代碼映射為穩定語系鍵。 / Map backend wager codes to stable translation keys. */
 function getBetTypeKey(betType) {
   return betType === null || betType === undefined ? 'unknown' : String(betType);
 }
 
+/** 取得目前語系的投注類型名稱。 / Return the localized wager-type label. */
 function getBetTypeLabel(betType, lang) {
   if (betType === undefined || betType === null) return '--';
   const bType = Number(betType);
@@ -2195,6 +2233,7 @@ function getBetTypeLabel(betType, lang) {
   return lang.betTypeUnknown;
 }
 
+/** 取得投注類型在圖表中的穩定色彩。 / Return the stable chart color for a wager type. */
 function getBetTypeColor(betType) {
   const bType = Number(betType);
   if (bType === 1) return '#6366f1';
@@ -2203,6 +2242,7 @@ function getBetTypeColor(betType) {
   return '#94a3b8';
 }
 
+/** 建立下拉選單用的遊戲名稱；缺名時安全回退。 / Build dropdown game copy with a safe fallback. */
 function formatGameDisplay(slotId, gameName) {
   return translations[currentLang].gameOption.replace(
     '{name}',
@@ -2210,6 +2250,7 @@ function formatGameDisplay(slotId, gameName) {
   );
 }
 
+/** 準備 Plotly hovertemplate 所需的跳脫後資料。 / Prepare escaped values consumed by Plotly hover templates. */
 function buildChartCustomData(row, lang) {
   return [
     formatCurrency(row.net_profit),
@@ -2222,6 +2263,7 @@ function buildChartCustomData(row, lang) {
   ];
 }
 
+/** 顯示遊戲名稱，避免正常情況暴露純 slot_id。 / Display a game name without exposing raw slot_id normally. */
 function formatGameNameOnly(slotId, gameName) {
   const normalizedName = String(gameName || '').trim();
   return normalizedName && normalizedName !== String(slotId)
@@ -2229,6 +2271,7 @@ function formatGameNameOnly(slotId, gameName) {
     : translations[currentLang].unknownGame;
 }
 
+/** 渲染營運總覽指標、排行與可導向列。 / Render overview metrics, rankings, and navigable rows. */
 function renderHomeDashboard(data) {
   const lang = translations[currentLang];
   const currentMonth = data.current_month || {};
@@ -2399,6 +2442,7 @@ function renderHomeDashboard(data) {
   homeStatus.textContent = '';
 }
 
+/** 以去重 Promise 載入總覽，避免自動刷新重疊。 / Load overview data with a shared promise to prevent overlapping refreshes. */
 function loadHomeDashboard({ silent = false } = {}) {
   if (homeDashboardRequest) return homeDashboardRequest;
   if (!silent) homeStatus.textContent = translations[currentLang].homeLoading;
@@ -2419,6 +2463,7 @@ function loadHomeDashboard({ silent = false } = {}) {
   return homeDashboardRequest;
 }
 
+/** 僅在頁面可見且已登入時啟動總覽刷新。 / Start overview refresh only while visible and authenticated. */
 function startHomeAutoRefresh() {
   if (homeRefreshTimer !== null) return;
   homeRefreshTimer = window.setInterval(() => {
@@ -2427,6 +2472,7 @@ function startHomeAutoRefresh() {
   }, HOME_REFRESH_INTERVAL_MS);
 }
 
+/** 依 Parent Agent 重建子 Agent 選單。 / Rebuild sub-agent options for the selected parent. */
 function populateAgentSelect() {
   const parentValue = agentParentSelect.value;
   const currentValue = agentSelect.value;
@@ -2445,6 +2491,7 @@ function populateAgentSelect() {
   updateAgentFilterVisibility();
 }
 
+/** 依下鑽層級顯示或隱藏 Agent／遊戲控制項。 / Show Agent and game controls according to drill-down depth. */
 function updateAgentFilterVisibility() {
   const parentSelected = agentParentSelect.value !== 'ALL';
   const agentSelected = parentSelected && agentSelect.value !== 'ALL';
@@ -2458,6 +2505,7 @@ function updateAgentFilterVisibility() {
   if (!agentSelected) agentGameSelect.value = 'ALL';
 }
 
+/** 首次進入頁面時載入 Agent 選項與可用日期。 / Load Agent options and dates on first entry. */
 async function initializeAgentPage() {
   if (agentInitialized) return;
   agentInitialized = true;
@@ -2498,6 +2546,7 @@ async function initializeAgentPage() {
   }
 }
 
+/** 依呼叫端提供的階層鍵彙總 Agent 指標。 / Aggregate Agent metrics using caller-provided hierarchy keys. */
 function aggregateAgentRows(rows, keyFor, labelFor) {
   const grouped = new Map();
   rows.forEach(row => {
@@ -2514,6 +2563,7 @@ function aggregateAgentRows(rows, keyFor, labelFor) {
   return Array.from(grouped.values());
 }
 
+/** 讓 Agent 表格列支援滑鼠、Enter 與 Space 下鑽。 / Make Agent rows drillable by mouse, Enter, and Space. */
 function makeAgentRowsInteractive(body, rows, activate, labelFor) {
   Array.from(body.rows).forEach((tableRow, index) => {
     const row = rows[index];
@@ -2531,6 +2581,7 @@ function makeAgentRowsInteractive(body, rows, activate, labelFor) {
   });
 }
 
+/** 載入指定 Parent／Agent／遊戲的每日績效。 / Load daily performance for a specific parent, agent, and game. */
 async function loadAgentGamePerformance(slotId) {
   const requestId = ++agentGamePerformanceRequestId;
   const params = new URLSearchParams({
@@ -2554,6 +2605,7 @@ async function loadAgentGamePerformance(slotId) {
   }
 }
 
+/** 僅在觀察窗成熟且分母有效時回傳留存百分比。 / Return retention only after cohort maturity with a valid denominator. */
 function retentionPercentIfAvailable(row, field, dayOffset, latestAvailableDate) {
   const value = row?.[field];
   const dnu = Number(row?.dnu);
@@ -2566,14 +2618,17 @@ function retentionPercentIfAvailable(row, field, dayOffset, latestAvailableDate)
   return Number.isFinite(number) ? number * 100 : null;
 }
 
+/** 以最新遊戲資料日判斷遊戲／Agent cohort 成熟度。 / Evaluate game or Agent cohort maturity against the latest game date. */
 function matureRetentionPercent(row, field, dayOffset) {
   return retentionPercentIfAvailable(row, field, dayOffset, gameLatestAvailableDate);
 }
 
+/** 以最新月度資料日判斷全站 cohort 成熟度。 / Evaluate casino cohort maturity against the latest monthly date. */
 function monthlyRetentionPercent(row, field, dayOffset) {
   return retentionPercentIfAvailable(row, field, dayOffset, monthlyLatestAvailableDate);
 }
 
+/** 將成熟的 D1/D3/D7 轉為單日長條圖資料。 / Convert mature D1/D3/D7 values into single-day bar data. */
 function retentionBarItems(row) {
   return [
     { label: 'D1', value: matureRetentionPercent(row, 'retention_1', 1), color: '#10b981' },
@@ -2582,6 +2637,7 @@ function retentionBarItems(row) {
   ].filter(item => item.value !== null);
 }
 
+/** 依目前欄位與方向排序明細副本。 / Sort a copy of detail rows by the active column and direction. */
 function sortDetailRows(rows, sortState) {
   return [...rows].sort((a, b) => {
     const left = a[sortState.key];
@@ -2594,6 +2650,7 @@ function sortDetailRows(rows, sortState) {
   });
 }
 
+/** 更新排序欄位文字與升降冪箭頭。 / Update sortable headers and direction indicators. */
 function updateDetailSortHeaders(selector, sortState) {
   document.querySelectorAll(selector).forEach(button => {
     const key = button.dataset.gameDetailKey || button.dataset.agentDetailKey || button.dataset.agentGameDetailKey;
@@ -2605,12 +2662,14 @@ function updateDetailSortHeaders(selector, sortState) {
   });
 }
 
+/** 切換同欄方向，或為新欄位選擇合理預設。 / Toggle the same key or choose a sensible default for a new key. */
 function toggleDetailSort(sortState, key) {
   return sortState.key === key
     ? { key, direction: sortState.direction === 'asc' ? 'desc' : 'asc' }
     : { key, direction: key === 'date' || key.endsWith('label') ? 'asc' : 'desc' };
 }
 
+/** 渲染 Agent 指定遊戲的指標、圖表與投注類型表。 / Render scoped Agent-game metrics, charts, and wager-type details. */
 function renderAgentGamePerformance(payload) {
   agentGamePerformanceCache = payload;
   const rows = payload.rows || [];
@@ -2698,6 +2757,7 @@ function renderAgentGamePerformance(payload) {
   ).join('') || '<tr><td colspan="8" class="table-empty-message">--</td></tr>';
 }
 
+/** 依目前選擇渲染 Parent、Agent 或遊戲層級。 / Render parent, agent, or game depth based on current selection. */
 function renderAgentAnalysis(data) {
   const lang = translations[currentLang];
   agentAnalysisCache = data;
@@ -2846,6 +2906,7 @@ function renderAgentAnalysis(data) {
   else agentGamePerformanceRequestId += 1;
 }
 
+/** 查詢 Agent 分析 cube、明細與遊戲摘要。 / Fetch the Agent analysis cube, details, and game summary. */
 async function loadAgentAnalysis() {
   if (!agentStartDate.value || !agentEndDate.value) return;
   agentStatus.textContent = translations[currentLang].agentLoading;
@@ -2867,6 +2928,7 @@ async function loadAgentAnalysis() {
   }
 }
 
+/** 切換單月、比較、季度、半年或年度控制項。 / Configure controls for single, comparison, quarter, half-year, or year mode. */
 function setMonthlyMode() {
   const mode = monthlyModeSelect.value;
   const comparing = mode === 'compare';
@@ -2891,6 +2953,7 @@ function setMonthlyMode() {
   }
 }
 
+/** 切換主要頁面並按需初始化資料。 / Switch the main page and lazily initialize its data. */
 function setActivePage(page) {
   const isHome = page === 'home';
   const isMonthly = page === 'monthly';
@@ -2938,6 +3001,7 @@ function setActivePage(page) {
   saveUiState();
 }
 
+/** 建立一致的月度／遊戲 Plotly 版面設定。 / Build shared Plotly layout settings for monthly and game charts. */
 function monthlyChartLayout(title, yTitle, extra = {}) {
   return {
     paper_bgcolor: 'rgba(0,0,0,0)',
@@ -2953,6 +3017,7 @@ function monthlyChartLayout(title, yTitle, extra = {}) {
   };
 }
 
+/** 渲染單一期間的每日營運趨勢。 / Render daily operations trends for one period. */
 function renderMonthlyCharts(rows) {
   const lang = translations[currentLang];
   const dates = rows.map(row => row.date);
@@ -2996,6 +3061,7 @@ function renderMonthlyCharts(rows) {
   ], monthlyChartLayout(lang.chartBetTypePlayers, lang.axisPlayers), common);
 }
 
+/** 依月份拆分資料並對齊月中日期比較。 / Split rows by month and align comparisons by day of month. */
 function renderMonthlyComparisonCharts(rows) {
   const lang = translations[currentLang];
   const groups = new Map();
@@ -3042,6 +3108,7 @@ function renderMonthlyComparisonCharts(rows) {
   Plotly.newPlot('monthly-retention-7-chart', traces(r => monthlyRetentionPercent(r, 'retention_7', 7)), retentionLayout('D7'), common);
 }
 
+/** 以期間總計／平均更新月度指標卡。 / Update monthly cards with period totals and averages. */
 function updateMonthlyMetrics(rows) {
   const average = key => rows.reduce((sum, row) => sum + Number(row[key] || 0), 0) / rows.length;
   const total = key => rows.reduce((sum, row) => sum + Number(row[key] || 0), 0);
@@ -3055,6 +3122,7 @@ function updateMonthlyMetrics(rows) {
   document.getElementById('monthly-days').textContent = formatCount(rows.length);
 }
 
+/** 由最新可用日期推導預設完整月份。 / Derive the default complete month from the latest available date. */
 async function loadMonthlyDateDefaults() {
   try {
     const response = await fetch('/api/dates');
@@ -3072,6 +3140,7 @@ async function loadMonthlyDateDefaults() {
   }
 }
 
+/** 驗證月份模式、載入指標並非同步更新遊戲排行。 / Validate month mode, load metrics, and refresh rankings asynchronously. */
 async function loadMonthlyData() {
   clearExpandedMonthlyCube();
   const mode = monthlyModeSelect.value;
@@ -3145,6 +3214,7 @@ async function loadMonthlyData() {
   }
 }
 
+/** 將多日遊戲列彙總為投注類型明細。 / Aggregate multi-day game rows into wager-type details. */
 function aggregateGameRows(rows) {
   const grouped = new Map();
   rows.forEach(row => {
@@ -3182,6 +3252,7 @@ function aggregateGameRows(rows) {
   }));
 }
 
+/** 渲染全部遊戲占比或單一遊戲時間趨勢。 / Render all-game share or one-game time trends. */
 function renderGameCharts(rows, selectedSlot, hourlyPlayers = []) {
   const lang = translations[currentLang];
   const data = selectedSlot === 'ALL' ? aggregateGameRows(rows) : rows;
@@ -3249,6 +3320,7 @@ function renderGameCharts(rows, selectedSlot, hourlyPlayers = []) {
   }
 }
 
+/** 以加權 RTP 與期間總計更新遊戲指標。 / Update game cards using weighted RTP and period totals. */
 function updateGameMetrics(rows, selectedSlot) {
   const data = selectedSlot === 'ALL' ? aggregateGameRows(rows) : rows;
   const average = key => data.reduce((sum, row) => sum + Number(row[key] || 0), 0) / data.length;
@@ -3266,6 +3338,7 @@ function updateGameMetrics(rows, selectedSlot) {
   document.getElementById('game-days').textContent = formatCount(data.length);
 }
 
+/** 產生每日投注類型表，並支援雙遊戲並列比較。 / Build daily wager-type details with optional side-by-side comparison. */
 function renderGameDailyBetStats(rows, selectedSlot, comparisonRows = [], comparisonSlot = '') {
   gameDailyBetPanel.hidden = selectedSlot === 'ALL' || !rows.length;
   if (gameDailyBetPanel.hidden) {
@@ -3309,6 +3382,7 @@ function renderGameDailyBetStats(rows, selectedSlot, comparisonRows = [], compar
   </tr>`).join('');
 }
 
+/** 清除 Plotly 圖表的放大／彈出狀態。 / Clear expanded Plotly chart state. */
 function clearExpandedMonthlyCube() {
   document.querySelectorAll('.monthly-analysis-content .monthly-chart-panel.monthly-cube-expanded')
     .forEach(panel => panel.classList.remove('monthly-cube-expanded'));
@@ -3334,6 +3408,7 @@ document.addEventListener('click', event => {
   }
 });
 
+/** 以方向鍵循環選項並略過不可用項目。 / Cycle select options by arrow key while skipping unusable values. */
 function moveSelectByArrow(selectElement, direction, { skipEmpty = true } = {}) {
   const options = Array.from(selectElement.options).filter(option => !skipEmpty || option.value);
   if (!options.length) return null;
@@ -3347,6 +3422,7 @@ function moveSelectByArrow(selectElement, direction, { skipEmpty = true } = {}) 
   return options[nextIndex];
 }
 
+/** 顯示短暫且可由讀屏器讀取的導向提示。 / Show a brief screen-reader-friendly navigation toast. */
 function showNavigationToast(message) {
   window.clearTimeout(navigationToastTimer);
   navigationToast.textContent = message;
@@ -3377,6 +3453,7 @@ document.addEventListener('keydown', event => {
   if (selectedOption) event.preventDefault();
 });
 
+/** 渲染每日玩家 Spin 分布、中位數與留存輔助資訊。 / Render daily player-spin distribution, medians, and retention context. */
 function renderGameSpinDistribution(rows, chartId = 'game-spin-distribution-chart', gameName = '') {
   const lang = translations[currentLang];
   const buckets = [
@@ -3442,6 +3519,7 @@ function renderGameSpinDistribution(rows, chartId = 'game-spin-distribution-char
   }), { responsive: true, displaylogo: false, displayModeBar: false });
 }
 
+/** 排除主遊戲並同步比較遊戲選單可見性。 / Exclude the primary game and synchronize comparison controls. */
 function syncGameComparisonControls() {
   const selectedSlot = gameSlotSelect.value || 'ALL';
   const canCompare = selectedSlot !== 'ALL';
@@ -3463,11 +3541,13 @@ function syncGameComparisonControls() {
   gameCompareSelectControl.hidden = !canCompare || !gameCompareCheckbox.checked || availableOptions.length === 0;
 }
 
+/** 從資料列取得穩定的圖例遊戲名稱。 / Resolve a stable game-series label from rows. */
 function gameSeriesName(slotId, rows) {
   const option = Array.from(gameSlotSelect.options).find(item => item.value === String(slotId));
   return formatGameNameOnly(slotId, option?.dataset.gameName || rows[0]?.game_name);
 }
 
+/** 將兩款遊戲依日期、留存與投注類型疊圖比較。 / Overlay two games by date, retention, and wager type. */
 function renderGameComparisonCharts(primaryRows, comparisonRows, primaryHourly, comparisonHourly, primarySlot, comparisonSlot) {
   const lang = translations[currentLang];
   const singleDay = gameStartDate.value === gameEndDate.value;
@@ -3515,6 +3595,7 @@ function renderGameComparisonCharts(primaryRows, comparisonRows, primaryHourly, 
   }))), monthlyChartLayout(singleDay ? lang.chartGameHourlyBetTypePlayers : lang.chartGameHourlyBetTypePlayersAverage, lang.axisPlayers, { xaxis: { dtick: 2 } }), common);
 }
 
+/** 載入指定遊戲每日玩家 Spin 中位數。 / Fetch daily per-player spin medians for one game. */
 async function loadGameSpinMedians(startDate, endDate, slotId) {
   const params = new URLSearchParams({
     start_date: startDate,
@@ -3527,6 +3608,7 @@ async function loadGameSpinMedians(startDate, endDate, slotId) {
   return rows;
 }
 
+/** 取得最新遊戲日期並初始化日期模式。 / Load the latest game date and initialize date-mode controls. */
 async function loadGameDateDefaults() {
   try {
     const response = await fetch('/api/dates');
@@ -3543,6 +3625,7 @@ async function loadGameDateDefaults() {
   }
 }
 
+/** 使用本地午夜安全位移日期。 / Shift a date safely from local midnight. */
 function shiftGameDate(dateValue, dayOffset) {
   const date = new Date(`${dateValue}T00:00:00`);
   date.setDate(date.getDate() + dayOffset);
@@ -3552,6 +3635,7 @@ function shiftGameDate(dateValue, dayOffset) {
   return `${year}-${month}-${day}`;
 }
 
+/** 依快捷日期模式更新實際查詢起訖日。 / Translate date presets into concrete query boundaries. */
 function setGameDateMode() {
   const mode = gameDateModeSelect.value;
   gameSingleDateControls.hidden = mode !== 'single-day';
@@ -3576,6 +3660,7 @@ function setGameDateMode() {
   }
 }
 
+/** 協調主遊戲、比較遊戲、排行、分布與中位數請求。 / Coordinate primary, comparison, ranking, distribution, and median requests. */
 async function loadGameData() {
   const startDate = gameStartDate.value;
   const endDate = gameEndDate.value;
@@ -3834,6 +3919,7 @@ document.querySelectorAll('[data-game-ranking-key]').forEach(button => {
   playerGameSelect, playerSelect, checkboxNewPlayer, checkboxOldPlayer, checkboxWinPlayer, checkboxLosePlayer,
   btnLangToggle].forEach(element => element.addEventListener('change', saveUiState));
 
+/** 驗證並套用 localStorage 中可恢復的 UI 狀態。 / Validate and apply restorable UI state from localStorage. */
 function restoreUiState() {
   restoredUiState = readUiState();
   if (!restoredUiState) return 'home';
@@ -3878,6 +3964,7 @@ function restoreUiState() {
   return 'home';
 }
 
+/** 渲染月度排行並建立保留期間的遊戲分析連結。 / Render monthly ranking links that preserve the active date range. */
 function renderMonthlyGameRanking() {
   const body = document.getElementById('monthly-game-ranking-body');
   const { key, direction } = monthlyRankingSort;
@@ -3937,6 +4024,7 @@ function renderMonthlyGameRanking() {
   });
 }
 
+/** 載入月度排行並保存查詢期間。 / Load monthly ranking data and cache its date range. */
 async function loadMonthlyGameRanking(startDate, endDate) {
   const response = await fetch(`/api/game-ranking?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`);
   const rows = await response.json();
@@ -3946,6 +4034,7 @@ async function loadMonthlyGameRanking(startDate, endDate) {
   renderMonthlyGameRanking();
 }
 
+/** 渲染遊戲頁排行與可排序欄位。 / Render the game-page ranking with sortable columns. */
 function renderGameRanking() {
   const body = document.getElementById('game-ranking-body');
   const { key, direction } = gameRankingSort;
@@ -3986,6 +4075,7 @@ function renderGameRanking() {
   </tr>`).join('');
 }
 
+/** 載入排行，並以 requestId 忽略過期回應。 / Fetch rankings and ignore stale responses using requestId. */
 async function loadGameRanking(startDate, endDate, requestId) {
   const response = await fetch(`/api/game-ranking?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`);
   const rows = await response.json();
@@ -3996,6 +4086,7 @@ async function loadGameRanking(startDate, endDate, requestId) {
   renderGameRanking();
 }
 
+/** 鎖定儀表板並顯示登入畫面。 / Lock the dashboard and display the login screen. */
 function showLoginScreen(message = '') {
   document.body.classList.add('auth-locked');
   loginError.textContent = message;
@@ -4003,6 +4094,7 @@ function showLoginScreen(message = '') {
   window.setTimeout(() => loginPassword.focus(), 0);
 }
 
+/** 還原狀態、更新語系並啟動首批資料請求。 / Restore state, update locale, and start initial data requests. */
 function initializeDashboard() {
   document.body.classList.remove('auth-locked');
   if (dashboardInitialized) return;
@@ -4101,7 +4193,7 @@ btnLogout.addEventListener('click', async () => {
   }
 });
 
-// 網頁加載完成後先確認登入狀態，再初始化儀表板
+// DOM 完成後先驗證 Session，成功才初始化資料與背景刷新。 / After DOM readiness, verify the session before data initialization and auto-refresh.
 window.addEventListener('DOMContentLoaded', async () => {
   updateLanguageUI();
   try {

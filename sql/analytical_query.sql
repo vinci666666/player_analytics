@@ -1,10 +1,10 @@
--- iGaming Player Betting Behavior & Financial Curve Analysis Query
--- Database Target Table: public.slot_parent_bet
--- Key logic:
---   1. Time Partitioning per day (bet_at_utc7::date). Cumulative values and sequence indices reset daily.
---   2. Play Sequence Numbering (1-based chronological index).
---   3. Game Switching (is_game_changed is true when slot_id changes from previous spin).
---   4. Daily Cumulative Profit (daily_cum_profit = sum of net_profit per day, in IDR).
+-- 玩家投注行為與損益曲線分析查詢。 / Player wagering behavior and financial-curve query.
+-- 目標資料表：public.slot_parent_bet。 / Target table: public.slot_parent_bet.
+-- 核心邏輯 / Key logic:
+--   1. 依 UTC+7 日期分區，每日重設序號與累積值。 / Partition by UTC+7 date; reset sequence and cumulative values daily.
+--   2. 依時間建立從 1 起算的投注序號。 / Number wagers chronologically from 1.
+--   3. slot_id 改變時標記遊戲切換。 / Mark a game switch when slot_id changes.
+--   4. 每日累計 IDR 淨利。 / Calculate daily cumulative net profit in IDR.
 
 WITH partitioned_data AS (
     SELECT 
@@ -15,14 +15,14 @@ WITH partitioned_data AS (
         has_free_game,
         bet_amount,
         total_prize,
-        -- Calculate individual spin profit: net_profit = total_prize - bet_amount
+        -- 單次淨利＝派彩－投注。 / Per-spin net profit equals payout minus wager.
         (total_prize - bet_amount) AS net_profit,
-        -- Get the slot_id from the immediate previous spin of the same player on the same day
+        -- 取得同玩家同日上一筆 slot_id。 / Read the preceding slot_id for the same player and day.
         LAG(slot_id) OVER(
             PARTITION BY player_id, bet_at_utc7::date
             ORDER BY bet_at_utc7 ASC
         ) AS prev_slot_id,
-        -- Assign a 1-based sequential index chronologically per day for the player
+        -- 為玩家每日投注建立時間序號。 / Assign a chronological daily sequence per player.
         ROW_NUMBER() OVER(
             PARTITION BY player_id, bet_at_utc7::date
             ORDER BY bet_at_utc7 ASC
@@ -41,15 +41,15 @@ analyzed_data AS (
         total_prize,
         net_profit,
         play_seq,
-        -- is_game_changed is true if current slot_id differs from immediate previous slot_id.
-        -- For the first spin of the day (prev_slot_id is NULL), we treat it as false.
+        -- 前後 slot_id 不同即為切換；每日第一筆不算切換。
+        -- A differing slot_id marks a switch; the first spin of each day does not.
         CASE 
             WHEN prev_slot_id IS NULL THEN false
             WHEN prev_slot_id <> slot_id THEN true
             ELSE false
         END AS is_game_changed,
-        -- Running Total of net_profit chronologically per player per day.
-        -- We specify ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW to force physical row accumulation
+        -- 依玩家每日時間順序累加淨利；ROWS frame 確保逐筆累積。
+        -- Accumulate net profit per player/day; the ROWS frame enforces physical-row accumulation.
         SUM(net_profit) OVER(
             PARTITION BY player_id, play_date 
             ORDER BY bet_at_utc7 ASC
@@ -64,7 +64,7 @@ SELECT
     play_date,
     slot_id,
     has_free_game,
-    -- Using CAST to numeric/varchar when formatting large IDR integers to prevent scientific notation in presentation layers
+    -- 大額 IDR 先 CAST，避免呈現層顯示科學記號。 / CAST large IDR values to prevent scientific notation.
     CAST(bet_amount AS numeric(20, 0)) AS bet_amount,
     CAST(total_prize AS numeric(20, 0)) AS total_prize,
     CAST(net_profit AS numeric(20, 0)) AS net_profit,

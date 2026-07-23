@@ -1,8 +1,10 @@
--- Rebuild the Agent-by-game daily snapshot from slot_parent_bet.
--- Agent-level reports aggregate this table; agent_daily_retention is obsolete.
+-- 從 slot_parent_bet 完整重建 Agent × 遊戲每日快照。 / Rebuild the Agent-by-game daily snapshot from slot_parent_bet.
+-- Agent 報表由此表向上彙總；舊 agent_daily_retention 已淘汰。 / Agent reports aggregate this table; the legacy table is obsolete.
 \ir create_agent_daily_game_retention.sql
 
 BEGIN;
+-- 關閉本次維護交易的查詢逾時，避免大型重建被 API 預設值中止。
+-- Disable the query timeout for this maintenance transaction so large rebuilds can finish.
 SET LOCAL statement_timeout = 0;
 
 CREATE TEMP TABLE _agent_player_game_daily ON COMMIT DROP AS

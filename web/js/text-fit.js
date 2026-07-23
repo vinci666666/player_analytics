@@ -1,5 +1,12 @@
+/**
+ * 指標卡文字自動縮放。 / Automatic metric-card text fitting.
+ * ResizeObserver 處理容器尺寸，MutationObserver 處理資料刷新後的文字變更。
+ * ResizeObserver tracks container size; MutationObserver tracks refreshed text.
+ */
+
 const DEFAULT_MIN_SIZE = 10;
 
+/** 將單一元素縮小到可容納寬度，但不低於下限。 / Shrink one element to fit without crossing the minimum size. */
 function fitElement(element, minSize) {
   if (!element.isConnected || element.clientWidth <= 0) return;
 
@@ -18,6 +25,7 @@ function fitElement(element, minSize) {
   element.style.fontSize = `${fittedSize}px`;
 }
 
+/** 安裝批次化觀察器並回傳清理函式。 / Install batched observers and return a cleanup function. */
 export function installAutoFitText(selector, options = {}) {
   const minSize = options.minSize ?? DEFAULT_MIN_SIZE;
   const elements = [...document.querySelectorAll(selector)];

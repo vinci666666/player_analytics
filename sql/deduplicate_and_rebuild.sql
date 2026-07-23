@@ -1,8 +1,7 @@
 \set ON_ERROR_STOP on
 
--- Remove duplicate source keys while preferring the representation that still
--- carries a JSON value in custom_fields. Rebuild all dependent local tables
--- from the deduplicated facts in the same transaction.
+-- 清除重複來源鍵，優先保留 custom_fields 仍含 JSON 的版本，再於同一交易重建衍生表。
+-- Remove duplicate source keys, prefer rows retaining custom_fields JSON, and rebuild derived tables atomically.
 BEGIN;
 
 SET LOCAL statement_timeout = 0;

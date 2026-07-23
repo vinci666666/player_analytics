@@ -1,11 +1,9 @@
 \set ON_ERROR_STOP on
 
--- One-time migration: split the current local UTC+7 timestamp into
--- bet_at (source UTC) and bet_at_utc7 (local reporting time), then rebuild all
--- derived tables from bet_at_utc7.
--- Before running, populate public._utc7_agent_name_stage from
--- pro_central.public.client and public._utc7_game_name_stage from the en-US
--- rows in pro_central.public.slot_game_name. Empty staging tables abort safely.
+-- 一次性遷移：將既有 UTC+7 時間拆為來源 UTC bet_at 與報表時間 bet_at_utc7，再重建衍生表。
+-- One-time migration: split UTC+7 timestamps into source-UTC bet_at and reporting-time bet_at_utc7, then rebuild derivatives.
+-- 執行前需填入 Agent／遊戲名稱暫存表；空暫存表會安全中止。
+-- Populate the Agent/game name staging tables first; empty staging tables abort safely.
 BEGIN;
 
 SET LOCAL statement_timeout = 0;

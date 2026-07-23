@@ -1,5 +1,5 @@
--- Server event types:
---   1 = information, 2 = warning, 3 = error, 4 = authentication
+-- 建立獨立交易寫入的伺服器稽核表。 / Create the server audit table written through independent transactions.
+-- 事件類型 / Event types: 1 = information, 2 = warning, 3 = error, 4 = authentication.
 CREATE TABLE IF NOT EXISTS public.server_action_log (
     time_utc7       TIMESTAMP WITHOUT TIME ZONE NOT NULL,
     message_type_id SMALLINT NOT NULL,
